@@ -416,9 +416,6 @@ document.addEventListener('DOMContentLoaded', () => {
             renderStoryContents();
             playerBar.style.display = 'flex';
             updateProgress();
-            
-            // Initiate buffering from startIndex immediately
-            startPrefetchLoop();
         } catch (err) {
             storyTitleEl.textContent = 'Lỗi tải truyện';
             storyContainerEl.innerHTML = `<div class="empty-state"><p style="color:#ef4444">Không thể tải: ${err.message}</p></div>`;
