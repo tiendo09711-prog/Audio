@@ -56,22 +56,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const ICON_PLAY  = `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
     const ICON_PAUSE = `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
 
-    // Voice presets: pitch & rate modifiers applied on top of the device's Vietnamese voice
-    const VOICES = [
-        { id: 'female-1', label: 'Nữ Tự Nhiên',   icon: '👩', gender: 'female', pitch: 1.1,  rate: 1.0  },
-        { id: 'female-2', label: 'Nữ Dịu Dàng',   icon: '🎩️', gender: 'female', pitch: 1.2,  rate: 0.9  },
-        { id: 'female-3', label: 'Nữ Linh Hoạt',  icon: '📻', gender: 'female', pitch: 1.0,  rate: 1.15 },
-        { id: 'male-1',   label: 'Nam Trầm Ấm',   icon: '👨', gender: 'male',   pitch: 0.85, rate: 1.0  },
-        { id: 'male-2',   label: 'Nam Điềm Tĩnh', icon: '🎤', gender: 'male',   pitch: 0.8,  rate: 0.9  },
-        { id: 'male-3',   label: 'Nam Rõ Ràng',   icon: '📢', gender: 'male',   pitch: 0.9,  rate: 1.15 },
-    ];
+
 
     let story           = [];
     let currentIndex    = 0;
     let isPlaying       = false;
     let isPaused        = false;
-    // Restore preferred voice from localStorage, default to 'male-1' (Nam Trầm Ấm)
-    let selectedVoiceId = localStorage.getItem('preferredVoice') || 'male-1';
     // Restore speed rate from localStorage, default to 1.0
     let speedRate       = parseFloat(localStorage.getItem('preferredSpeed') || '1.0');
     let currentStoryId  = null;
@@ -252,30 +242,7 @@ document.addEventListener('DOMContentLoaded', () => {
         togglePlay(); // resume
     });
 
-    function buildVoiceChips() {
-        voiceGrid.innerHTML = '';
-        VOICES.forEach(v => {
-            const chip = document.createElement('button');
-            chip.className = 'voice-chip' + (v.id === selectedVoiceId ? ' selected' : '');
-            chip.title     = `pitch: ${v.pitch}, tốc độ: ${v.rate}x`;
-            chip.innerHTML = `<span>${v.icon}</span> ${v.label}`;
-            chip.addEventListener('click', () => {
-                if (selectedVoiceId === v.id) return;
-                selectedVoiceId = v.id;
-                localStorage.setItem('preferredVoice', v.id);
-                document.querySelectorAll('.voice-chip').forEach(c => c.classList.remove('selected'));
-                chip.classList.add('selected');
-                if (isPlaying) {
-                    // Restart current paragraph with new voice preset
-                    const idx = currentIndex;
-                    synth.cancel();
-                    setTimeout(() => speakParagraph(idx), 80);
-                }
-            });
-            voiceGrid.appendChild(chip);
-        });
-    }
-    buildVoiceChips();
+
     // Re-detect voices after chips are built (async load on Chrome)
     setTimeout(detectVietnameseVoices, 500);
 
@@ -467,15 +434,12 @@ document.addEventListener('DOMContentLoaded', () => {
         highlightParagraph(index);
         saveProgress(index);
 
-        const preset = VOICES.find(v => v.id === selectedVoiceId) || VOICES[3];
-        const voice  = preset.gender === 'male' ? viMaleVoice : viFemaleVoice;
-
         const utter = new SpeechSynthesisUtterance(text);
         utter.lang   = 'vi-VN';
-        utter.rate   = Math.max(0.5, Math.min(2.0, speedRate * preset.rate));
-        utter.pitch  = preset.pitch;
+        utter.rate   = Math.max(0.5, Math.min(2.0, speedRate));
+        utter.pitch  = 0.85; // Giọng trầm ấm
         utter.volume = 1;
-        if (voice) utter.voice = voice;
+        if (viMaleVoice) utter.voice = viMaleVoice;
 
         utter.onend = () => {
             if (isPlaying && !isPaused) speakParagraph(index + 1);
