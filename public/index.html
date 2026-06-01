@@ -56,9 +56,14 @@
         <main class="main-content">
             <!-- Top header -->
             <div class="content-header" id="content-header">
-                <div class="header-text">
-                    <p class="header-label" id="header-label">Chọn một chương từ danh sách bên trái</p>
-                    <h1 id="story-title">Ứng dụng nghe truyện</h1>
+                <div class="header-text" style="display:flex; align-items:center; gap: 16px;">
+                    <button id="mobile-menu-btn" class="icon-btn mobile-only" title="Danh sách chương" style="display: none; padding: 4px;">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                    </button>
+                    <div>
+                        <p class="header-label" id="header-label">Chọn một chương từ danh sách bên trái</p>
+                        <h1 id="story-title">Ứng dụng nghe truyện</h1>
+                    </div>
                 </div>
             </div>
 
@@ -142,6 +147,9 @@
             </div>
         </div>
     </div>
+
+    <!-- Mobile Sidebar Overlay -->
+    <div id="sidebar-overlay" class="sidebar-overlay" style="display:none;"></div>
 
     <script src="app.js"></script>
 </body>

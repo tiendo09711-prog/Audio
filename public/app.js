@@ -25,6 +25,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const resumePara       = document.getElementById('resume-para');
     const resumePlayBtn    = document.getElementById('resume-play-btn');
 
+    const mobileMenuBtn    = document.getElementById('mobile-menu-btn');
+    const sidebarEl        = document.querySelector('.sidebar');
+    const sidebarOverlay   = document.getElementById('sidebar-overlay');
+
+    if (mobileMenuBtn && sidebarEl && sidebarOverlay) {
+        mobileMenuBtn.addEventListener('click', () => {
+            sidebarEl.classList.add('open');
+            sidebarOverlay.style.display = 'block';
+        });
+        sidebarOverlay.addEventListener('click', () => {
+            sidebarEl.classList.remove('open');
+            sidebarOverlay.style.display = 'none';
+        });
+    }
+
     const ICON_PLAY  = `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
     const ICON_PAUSE = `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
 
@@ -178,6 +193,12 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadStory(storyId, li) {
         currentStoryId = storyId;
         renderFileList(allFiles);
+        
+        if (sidebarEl && sidebarEl.classList.contains('open')) {
+            sidebarEl.classList.remove('open');
+            sidebarOverlay.style.display = 'none';
+        }
+
         stopPlayback();
         storyContainerEl.innerHTML = `<div class="empty-state"><div class="empty-icon">
             <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -363,6 +384,11 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch (playErr) {
                 activeAudios.delete(audio);
                 URL.revokeObjectURL(blobUrl);
+                if (playErr.name === 'NotAllowedError') {
+                    isPlaying = false; isPaused = true; updatePlayButton();
+                    showToast('Trình duyệt chặn tự động phát. Vui lòng bấm Phát thủ công.');
+                    return; 
+                }
                 throw playErr;
             }
             
