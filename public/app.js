@@ -406,7 +406,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function stopAndPlay(index) {
         resetIdleTimer();
-        stopPlayback();
+        stopPlayback(false); // Don't clear the buffer, just stop current audio
         setTimeout(() => beginPlay(index), 50);
     }
 
@@ -419,29 +419,41 @@ document.addEventListener('DOMContentLoaded', () => {
             prefetchController = new AbortController();
 
             let nextToFetch = currentIndex;
-            while (nextToFetch < story.length && (prefetchedBlobs.has(nextToFetch) || nextToFetch < currentIndex)) {
-                nextToFetch++;
-            }
 
             while (nextToFetch < story.length) {
                 if (prefetchController.signal.aborted) break;
 
+                // Skip if already prefetched or in the past
+                if (nextToFetch < currentIndex || prefetchedBlobs.has(nextToFetch)) {
+                    nextToFetch++;
+                    continue;
+                }
+
                 const text = story[nextToFetch];
                 const url = `/api/tts?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(selectedVoiceId)}`;
-                const res = await fetch(url, { signal: prefetchController.signal });
-
-                if (res.ok) {
-                    const blob = await res.blob();
-                    if (blob.size > 0) {
-                        prefetchedBlobs.set(nextToFetch, blob);
-                        updateProgress();
+                
+                try {
+                    const res = await fetch(url, { signal: prefetchController.signal });
+                    
+                    if (res.ok) {
+                        const blob = await res.blob();
+                        if (blob.size > 0) {
+                            prefetchedBlobs.set(nextToFetch, blob);
+                            updateProgress();
+                        }
+                        nextToFetch++;
+                        // Small delay to prevent Edge TTS rate limit
+                        await new Promise(r => setTimeout(r, 400));
+                    } else {
+                        // Rate limit or server error: wait longer and retry
+                        await new Promise(r => setTimeout(r, 3000));
                     }
-                    nextToFetch++;
-                } else {
-                    await new Promise(r => setTimeout(r, 2000));
+                } catch (e) {
+                    if (e.name === 'AbortError') break;
+                    // Network error: wait and retry
+                    await new Promise(r => setTimeout(r, 3000));
                 }
             }
-        } catch (err) {
         } finally {
             isPrefetching = false;
         }
@@ -486,22 +498,30 @@ document.addEventListener('DOMContentLoaded', () => {
         saveProgress(index);
 
         try {
-            let blob;
-            if (prefetchedBlobs.has(index)) {
+            let blob = prefetchedBlobs.get(index);
+
+            if (!blob) {
+                showToast('Đang tải đệm âm thanh (Buffering)...');
+                document.getElementById(`para-${index}`)?.classList.add('para-loading');
+                
+                startPrefetchLoop(); // ensure prefetch is running
+                
+                let waitTime = 0;
+                // Wait up to 30 seconds for the prefetch loop to download this paragraph
+                while (!prefetchedBlobs.has(index) && waitTime < 30000) {
+                    if (!isPlaying || currentIndex !== index) return;
+                    await new Promise(r => setTimeout(r, 500));
+                    waitTime += 500;
+                }
+                
+                document.getElementById(`para-${index}`)?.classList.remove('para-loading');
                 blob = prefetchedBlobs.get(index);
-                prefetchedBlobs.delete(index);
-            } else {
-                if (fetchController) fetchController.abort();
-                fetchController = new AbortController();
-
-                const text = story[index];
-                const url = `/api/tts?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(selectedVoiceId)}`;
-                const res = await fetch(url, { signal: fetchController.signal });
-
-                if (!res.ok) throw new Error('Server returned ' + res.status);
-                blob = await res.blob();
-                if (blob.size === 0) throw new Error('Empty audio blob received');
+                
+                if (!blob) throw new Error('Timeout waiting for buffer');
             }
+            
+            // Remove from buffer once we are about to play it
+            prefetchedBlobs.delete(index);
 
             const blobUrl = URL.createObjectURL(blob);
 
@@ -637,17 +657,16 @@ document.addEventListener('DOMContentLoaded', () => {
         updateProgress();
     });
 
-    function stopPlayback() {
-        prefetchedBlobs.clear();
+    function stopPlayback(clearBuffer = true) {
+        if (clearBuffer) {
+            prefetchedBlobs.clear();
+        }
         isPrefetching = false;
         if (prefetchController) {
             prefetchController.abort();
             prefetchController = null;
         }
-        if (fetchController) {
-            fetchController.abort();
-            fetchController = null;
-        }
+
         
         activeAudios.forEach(a => { 
             a.pause(); 
