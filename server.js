@@ -90,8 +90,6 @@ const VOICE_CONFIGS = {
     'male-3':   { voice: 'vi-VN-NamMinhNeural',  rate: '+18%', pitch: '+5Hz',   label: 'Nam Rõ Ràng'  },
 };
 
-let globalTTS = null;
-
 app.get('/api/tts', async (req, res) => {
     const text = req.query.text;
     const voiceId = 'male-1'; // Force male voice
@@ -99,13 +97,12 @@ app.get('/api/tts', async (req, res) => {
     if (!text) return res.status(400).send('Missing text');
     const cfg = VOICE_CONFIGS[voiceId];
 
+    let tts = null;
     try {
-        if (!globalTTS) {
-            globalTTS = new MsEdgeTTS();
-            await globalTTS.setMetadata(cfg.voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-        }
+        tts = new MsEdgeTTS();
+        await tts.setMetadata(cfg.voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
 
-        const { audioStream } = globalTTS.toStream(text, { rate: cfg.rate, pitch: cfg.pitch });
+        const { audioStream } = tts.toStream(text, { rate: cfg.rate, pitch: cfg.pitch });
 
         const chunks = [];
         let errored = false;
@@ -113,6 +110,7 @@ app.get('/api/tts', async (req, res) => {
         audioStream.on('data', chunk => chunks.push(chunk));
 
         audioStream.on('close', () => {
+            if (tts) { tts.close(); tts = null; }
             if (errored) return;
             const audio = Buffer.concat(chunks);
             if (audio.length === 0) {
@@ -125,13 +123,13 @@ app.get('/api/tts', async (req, res) => {
 
         audioStream.on('error', err => {
             errored = true;
+            if (tts) { tts.close(); tts = null; }
             console.error('Edge TTS stream error:', err.message);
-            if (globalTTS) { globalTTS.close(); globalTTS = null; }
             if (!res.headersSent) res.status(500).json({ error: err.message });
         });
 
     } catch (err) {
-        if (globalTTS) { globalTTS.close(); globalTTS = null; }
+        if (tts) { tts.close(); tts = null; }
         console.error('TTS error:', err.message);
         if (!res.headersSent) res.status(500).json({ error: err.message });
     }
