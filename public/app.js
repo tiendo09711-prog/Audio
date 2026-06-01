@@ -381,6 +381,9 @@ document.addEventListener('DOMContentLoaded', () => {
             renderStoryContents();
             playerBar.style.display = 'flex';
             updateProgress();
+            
+            // Initiate buffering immediately so it's ready when play begins
+            startPrefetchLoop();
         } catch (err) {
             storyTitleEl.textContent = 'Lỗi tải truyện';
             storyContainerEl.innerHTML = `<div class="empty-state"><p style="color:#ef4444">Không thể tải: ${err.message}</p></div>`;
@@ -442,11 +445,13 @@ document.addEventListener('DOMContentLoaded', () => {
                             updateProgress();
                         }
                         nextToFetch++;
-                        // Small delay to prevent Edge TTS rate limit
-                        await new Promise(r => setTimeout(r, 400));
+                        
+                        // Dynamic delay: load super fast if buffer is small, otherwise slow down to avoid rate limits
+                        const delayMs = prefetchedBlobs.size < 4 ? 50 : 500;
+                        await new Promise(r => setTimeout(r, delayMs));
                     } else {
                         // Rate limit or server error: wait longer and retry
-                        await new Promise(r => setTimeout(r, 3000));
+                        await new Promise(r => setTimeout(r, 2500));
                     }
                 } catch (e) {
                     if (e.name === 'AbortError') break;
