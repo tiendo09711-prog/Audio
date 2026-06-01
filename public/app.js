@@ -407,6 +407,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let prefetchController = null;
     let isPrefetching = false;
 
+    // Returns true if text has NO letters and NO digits — pure punctuation like '......' or '---'.
+    // Mixed content like 'hắc....' still returns false so it gets read normally.
+    function isPunctuationOnly(text) {
+        return !(/\p{L}/u.test(text)) && !(/\d/.test(text));
+    }
+
     function stopAndPlay(index) {
         resetIdleTimer();
         stopPlayback(false); // Don't clear the buffer, just stop current audio
@@ -433,6 +439,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 const text = story[nextToFetch];
+                
+                // If the paragraph is pure punctuation (e.g. '......'), skip without calling TTS
+                if (isPunctuationOnly(text)) {
+                    prefetchedBlobs.set(nextToFetch, 'SKIP');
+                    updateProgress();
+                    nextToFetch++;
+                    continue;
+                }
+                
                 const url = `/api/tts?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(selectedVoiceId)}`;
                 
                 try {
@@ -442,8 +457,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         const blob = await res.blob();
                         if (blob.size > 0) {
                             prefetchedBlobs.set(nextToFetch, blob);
-                            updateProgress();
+                        } else {
+                            // TTS returned empty audio (e.g. garbled text) - mark as skip
+                            prefetchedBlobs.set(nextToFetch, 'SKIP');
                         }
+                        updateProgress();
                         nextToFetch++;
                         // No delay - load at maximum speed
                     } else {
@@ -509,8 +527,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 startPrefetchLoop(); // ensure prefetch is running
                 
                 let waitTime = 0;
-                // Wait up to 30 seconds for the prefetch loop to download this paragraph
-                while (!prefetchedBlobs.has(index) && waitTime < 30000) {
+                // Wait up to 15 seconds - if still stuck, skip this paragraph
+                while (!prefetchedBlobs.has(index) && waitTime < 15000) {
                     if (!isPlaying || currentIndex !== index) return;
                     await new Promise(r => setTimeout(r, 500));
                     waitTime += 500;
@@ -519,11 +537,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 document.getElementById(`para-${index}`)?.classList.remove('para-loading');
                 blob = prefetchedBlobs.get(index);
                 
-                if (!blob) throw new Error('Timeout waiting for buffer');
+                if (!blob) {
+                    // Stuck for 15s — skip this paragraph silently
+                    console.warn(`Paragraph ${index} timed out after 15s, skipping.`);
+                    if (isPlaying) beginPlay(index + 1, true);
+                    return;
+                }
             }
             
             // Remove from buffer once we are about to play it
             prefetchedBlobs.delete(index);
+            
+            // SKIP marker: paragraph was flagged as punctuation-only, advance silently
+            if (blob === 'SKIP') {
+                if (isPlaying) beginPlay(index + 1, true);
+                return;
+            }
 
             const blobUrl = URL.createObjectURL(blob);
 
