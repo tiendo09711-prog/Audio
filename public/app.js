@@ -445,13 +445,10 @@ document.addEventListener('DOMContentLoaded', () => {
                             updateProgress();
                         }
                         nextToFetch++;
-                        
-                        // Dynamic delay: load super fast if buffer is small, otherwise slow down to avoid rate limits
-                        const delayMs = prefetchedBlobs.size < 4 ? 50 : 500;
-                        await new Promise(r => setTimeout(r, delayMs));
+                        // No delay - load at maximum speed
                     } else {
-                        // Rate limit or server error: wait longer and retry
-                        await new Promise(r => setTimeout(r, 2500));
+                        // Rate limit or server error: wait then retry
+                        await new Promise(r => setTimeout(r, 2000));
                     }
                 } catch (e) {
                     if (e.name === 'AbortError') break;
