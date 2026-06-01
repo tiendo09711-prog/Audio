@@ -9,6 +9,7 @@ const path = require('path');
 const cheerio = require('cheerio');
 const mongoose = require('mongoose');
 const multer = require('multer');
+const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -89,6 +90,52 @@ const VOICE_CONFIGS = {
     'male-3':   { voice: 'vi-VN-NamMinhNeural',  rate: '+18%', pitch: '+5Hz',   label: 'Nam Rõ Ràng'  },
 };
 
+let globalTTS = null;
+
+app.get('/api/tts', async (req, res) => {
+    const text = req.query.text;
+    const voiceId = 'male-1'; // Force male voice
+
+    if (!text) return res.status(400).send('Missing text');
+    const cfg = VOICE_CONFIGS[voiceId];
+
+    try {
+        if (!globalTTS) {
+            globalTTS = new MsEdgeTTS();
+            await globalTTS.setMetadata(cfg.voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+        }
+
+        const { audioStream } = globalTTS.toStream(text, { rate: cfg.rate, pitch: cfg.pitch });
+
+        const chunks = [];
+        let errored = false;
+
+        audioStream.on('data', chunk => chunks.push(chunk));
+
+        audioStream.on('close', () => {
+            if (errored) return;
+            const audio = Buffer.concat(chunks);
+            if (audio.length === 0) {
+                return res.status(500).json({ error: 'Empty TTS response' });
+            }
+            res.setHeader('Content-Type', 'audio/mpeg');
+            res.setHeader('Content-Length', audio.length);
+            res.end(audio);
+        });
+
+        audioStream.on('error', err => {
+            errored = true;
+            console.error('Edge TTS stream error:', err.message);
+            if (globalTTS) { globalTTS.close(); globalTTS = null; }
+            if (!res.headersSent) res.status(500).json({ error: err.message });
+        });
+
+    } catch (err) {
+        if (globalTTS) { globalTTS.close(); globalTTS = null; }
+        console.error('TTS error:', err.message);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+    }
+});
 
 // ─── Database Endpoints ────────────────────────────────────────────────────
 

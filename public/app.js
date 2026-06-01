@@ -67,30 +67,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentStoryId  = null;
     let allFiles        = [];
 
-    // ─── Web Speech API Engine ────────────────────────────────────────────────
-    const synth = window.speechSynthesis;
-    let viMaleVoice   = null;
-    let viFemaleVoice = null;
-    let currentUtterance = null;
+    // Pool of 2 audio elements to avoid iOS memory limits and NotAllowed errors from creating too many
+    const audioPool = [new Audio(), new Audio()];
+    let poolIndex = 0;
 
-    function detectVietnameseVoices() {
-        const voices = synth.getVoices();
-        const vi = voices.filter(v => v.lang && v.lang.toLowerCase().startsWith('vi'));
-        if (vi.length === 0) return;
-        // Attempt to find distinct male/female voices (e.g. Google vi-VN-Standard-B = male)
-        viMaleVoice   = vi.find(v => /\bB\b|\bD\b|male|man/i.test(v.name)) || vi[vi.length - 1];
-        viFemaleVoice = vi.find(v => /\bA\b|\bC\b|female|woman|linh/i.test(v.name)) || vi[0];
-    }
-    // Voices load asynchronously on some browsers
-    if (synth.onvoiceschanged !== undefined) synth.onvoiceschanged = detectVietnameseVoices;
-    detectVietnameseVoices();
-
-    // iOS keepalive: prevent TTS from pausing when screen locks
-    // Plays a near-silent looping audio to keep the audio session alive
-    const iosKeepAlive = new Audio();
-    iosKeepAlive.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-    iosKeepAlive.loop = true;
-    iosKeepAlive.volume = 0.001;
+    let activeAudios    = new Set();
+    let fetchController = null;
 
     let sleepTimerEnd      = null;
     let sleepTimerInterval = null;
@@ -243,8 +225,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
 
-    // Re-detect voices after chips are built (async load on Chrome)
-    setTimeout(detectVietnameseVoices, 500);
 
     // Init speed slider display from saved value
     rateRange.value = speedRate;
@@ -383,6 +363,9 @@ document.addEventListener('DOMContentLoaded', () => {
             renderStoryContents();
             playerBar.style.display = 'flex';
             updateProgress();
+            
+            // Initiate buffering from startIndex immediately
+            startPrefetchLoop();
         } catch (err) {
             storyTitleEl.textContent = 'Lỗi tải truyện';
             storyContainerEl.innerHTML = `<div class="empty-state"><p style="color:#ef4444">Không thể tải: ${err.message}</p></div>`;
@@ -402,68 +385,80 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Returns true if text has NO letters and NO digits — pure punctuation like '......' or '---'
+    let prefetchedBlobs = new Map();
+    let prefetchController = null;
+    let isPrefetching = false;
+
+    // Returns true if text has NO letters and NO digits — pure punctuation like '......' or '---'.
+    // Mixed content like 'hắc....' still returns false so it gets read normally.
     function isPunctuationOnly(text) {
         return !(/\p{L}/u.test(text)) && !(/\d/.test(text));
     }
 
-    function speakParagraph(index) {
-        if (!isPlaying) return;
-
-        if (index >= story.length) {
-            isPlaying = false;
-            isPaused  = false;
-            updatePlayButton();
-            updateProgress();
-            iosKeepAlive.pause();
-            playNextChapter();
-            return;
-        }
-
-        const text = story[index];
-
-        // Skip pure-punctuation paragraphs silently
-        if (isPunctuationOnly(text)) {
-            currentIndex = index;
-            speakParagraph(index + 1);
-            return;
-        }
-
-        currentIndex = index;
-        updateProgress();
-        highlightParagraph(index);
-        saveProgress(index);
-
-        const utter = new SpeechSynthesisUtterance(text);
-        utter.lang   = 'vi-VN';
-        utter.rate   = Math.max(0.5, Math.min(2.0, speedRate));
-        utter.pitch  = 0.85; // Giọng trầm ấm
-        utter.volume = 1;
-        if (viMaleVoice) utter.voice = viMaleVoice;
-
-        utter.onend = () => {
-            if (isPlaying && !isPaused) speakParagraph(index + 1);
-        };
-
-        utter.onerror = (e) => {
-            if (e.error === 'canceled' || e.error === 'interrupted') return;
-            console.warn('Speech error on paragraph', index, ':', e.error);
-            if (isPlaying) speakParagraph(index + 1);
-        };
-
-        currentUtterance = utter;
-        synth.speak(utter);
-    }
-
     function stopAndPlay(index) {
         resetIdleTimer();
-        synth.cancel();
-        currentUtterance = null;
-        isPlaying = true;
-        isPaused  = false;
-        updatePlayButton();
-        iosKeepAlive.play().catch(() => {});
-        setTimeout(() => speakParagraph(index), 80);
+        stopPlayback(false); // Don't clear the buffer, just stop current audio
+        setTimeout(() => beginPlay(index), 50);
+    }
+
+    async function startPrefetchLoop() {
+        if (isPrefetching) return;
+        isPrefetching = true;
+
+        try {
+            if (prefetchController) prefetchController.abort();
+            prefetchController = new AbortController();
+
+            let nextToFetch = currentIndex;
+
+            while (nextToFetch < story.length) {
+                if (prefetchController.signal.aborted) break;
+
+                // Skip if already prefetched or in the past
+                if (nextToFetch < currentIndex || prefetchedBlobs.has(nextToFetch)) {
+                    nextToFetch++;
+                    continue;
+                }
+
+                const text = story[nextToFetch];
+                
+                // If the paragraph is pure punctuation (e.g. '......'), skip without calling TTS
+                if (isPunctuationOnly(text)) {
+                    prefetchedBlobs.set(nextToFetch, 'SKIP');
+                    updateProgress();
+                    nextToFetch++;
+                    continue;
+                }
+                
+                const url = `/api/tts?text=${encodeURIComponent(text)}`;
+                
+                try {
+                    const res = await fetch(url, { signal: prefetchController.signal });
+                    
+                    if (res.ok) {
+                        const blob = await res.blob();
+                        if (blob.size > 0) {
+                            prefetchedBlobs.set(nextToFetch, blob);
+                        } else {
+                            // TTS returned empty audio (e.g. garbled text) - mark as skip
+                            prefetchedBlobs.set(nextToFetch, 'SKIP');
+                        }
+                        updateProgress();
+                        nextToFetch++;
+                        // No delay - load at maximum speed
+                    } else {
+                        // Rate limit or server error: wait then retry
+                        await new Promise(r => setTimeout(r, 2000));
+                    }
+                } catch (e) {
+                    if (e.name === 'AbortError') break;
+                    // Network error: wait and retry
+                    await new Promise(r => setTimeout(r, 3000));
+                }
+            }
+        } finally {
+            isPrefetching = false;
+        }
     }
 
     let progressTimeout = null;
@@ -485,25 +480,157 @@ document.addEventListener('DOMContentLoaded', () => {
         resumePlayBtn.onclick = () => stopAndPlay(index);
     }
 
+    async function beginPlay(index, isAutoAdvance = false) {
+        if (!story || story.length === 0) return;
+        
+        if (index >= story.length) {
+            isPlaying = false;
+            updatePlayButton();
+            playNextChapter();
+            return;
+        }
+
+        currentIndex = index;
+        isPlaying    = true;
+        isPaused     = false;
+        updatePlayButton();
+        updateProgress();
+        highlightParagraph(index);
+        
+        saveProgress(index);
+
+        try {
+            let blob = prefetchedBlobs.get(index);
+
+            if (!blob) {
+                showToast('Đang tải đệm âm thanh (Buffering)...');
+                document.getElementById(`para-${index}`)?.classList.add('para-loading');
+                
+                startPrefetchLoop(); // ensure prefetch is running
+                
+                let waitTime = 0;
+                // Wait up to 15 seconds - if still stuck, skip this paragraph
+                while (!prefetchedBlobs.has(index) && waitTime < 15000) {
+                    if (!isPlaying || currentIndex !== index) return;
+                    await new Promise(r => setTimeout(r, 500));
+                    waitTime += 500;
+                }
+                
+                document.getElementById(`para-${index}`)?.classList.remove('para-loading');
+                blob = prefetchedBlobs.get(index);
+                
+                if (!blob) {
+                    // Stuck for 15s — skip this paragraph silently
+                    console.warn(`Paragraph ${index} timed out after 15s, skipping.`);
+                    if (isPlaying) beginPlay(index + 1, true);
+                    return;
+                }
+            }
+            
+            // Remove from buffer once we are about to play it
+            prefetchedBlobs.delete(index);
+            
+            // SKIP marker: paragraph was flagged as punctuation-only, advance silently
+            if (blob === 'SKIP') {
+                if (isPlaying) beginPlay(index + 1, true);
+                return;
+            }
+
+            const blobUrl = URL.createObjectURL(blob);
+
+            if (!isPlaying || currentIndex !== index) {
+                URL.revokeObjectURL(blobUrl);
+                return;
+            }
+
+            if (!isAutoAdvance) {
+                activeAudios.forEach(a => { 
+                    a.pause(); 
+                    a.ontimeupdate = null; 
+                    if (a.blobUrl) {
+                        URL.revokeObjectURL(a.blobUrl);
+                        a.blobUrl = null;
+                    }
+                });
+                activeAudios.clear();
+            }
+
+            const audio = audioPool[poolIndex];
+            poolIndex = (poolIndex + 1) % 2;
+            
+            // Cleanup previous blob on this audio element if any
+            if (audio.blobUrl && audio.blobUrl !== blobUrl) {
+                URL.revokeObjectURL(audio.blobUrl);
+            }
+
+            audio.src = blobUrl;
+            audio.playbackRate = speedRate;
+            audio.blobUrl = blobUrl;
+            activeAudios.add(audio);
+            
+            let hasStartedNext = false;
+
+            audio.ontimeupdate = () => {
+                if (audio.duration && (audio.duration - audio.currentTime) <= 0.4 && !hasStartedNext) {
+                    hasStartedNext = true;
+                    if (isPlaying) beginPlay(currentIndex + 1, true);
+                }
+            };
+            
+            audio.onended = () => {
+                activeAudios.delete(audio);
+                if (audio.blobUrl === blobUrl) {
+                    URL.revokeObjectURL(blobUrl);
+                    audio.blobUrl = null;
+                }
+            };
+
+            audio.onerror = () => {
+                console.error('Audio object error', audio.error);
+                showToast('Lỗi phát âm thanh. Đang thử đoạn tiếp...');
+                if (isPlaying && !hasStartedNext) {
+                    hasStartedNext = true;
+                    setTimeout(() => beginPlay(currentIndex + 1, true), 1000);
+                }
+            };
+
+            try {
+                await audio.play();
+            } catch (playErr) {
+                activeAudios.delete(audio);
+                URL.revokeObjectURL(blobUrl);
+                if (playErr.name === 'NotAllowedError') {
+                    isPlaying = false; isPaused = true; updatePlayButton();
+                    showToast('Trình duyệt chặn tự động phát. Vui lòng bấm Phát thủ công.');
+                    return; 
+                }
+                throw playErr;
+            }
+            
+            updatePlayButton();
+
+            startPrefetchLoop();
+
+        } catch (err) {
+            if (err.name === 'AbortError' || err.message.includes('interrupted')) return;
+            console.error('Fetch/Play error:', err.message);
+            showToast('Lỗi tải đoạn âm thanh này. Bỏ qua...');
+            if (isPlaying) setTimeout(() => beginPlay(currentIndex + 1, true), 1000);
+        }
+    }
+
     function togglePlay() {
         if (!isPlaying) {
             resetIdleTimer();
-            if (isPaused) {
-                synth.resume();
-                isPlaying = true;
-                isPaused  = false;
-                updatePlayButton();
+            if (isPaused && activeAudios.size > 0) {
+                activeAudios.forEach(a => a.play().catch(()=>{}));
+                isPlaying = true; isPaused = false; updatePlayButton();
             } else {
-                isPlaying = true;
-                iosKeepAlive.play().catch(() => {});
-                speakParagraph(currentIndex);
-                updatePlayButton();
+                beginPlay(currentIndex);
             }
         } else {
-            synth.pause();
-            isPlaying = false;
-            isPaused  = true;
-            updatePlayButton();
+            activeAudios.forEach(a => a.pause());
+            isPlaying = false; isPaused = true; updatePlayButton();
         }
     }
     
@@ -512,7 +639,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const idx = allFiles.findIndex(f => f.id === currentStoryId);
         if (idx !== -1 && idx < allFiles.length - 1) {
             loadStory(allFiles[idx + 1].id).then(() => {
-                setTimeout(() => stopAndPlay(0), 300);
+                setTimeout(() => beginPlay(0), 500);
             });
         } else {
             showToast('Đã đến chương cuối cùng.');
@@ -524,7 +651,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const idx = allFiles.findIndex(f => f.id === currentStoryId);
         if (idx > 0) {
             loadStory(allFiles[idx - 1].id).then(() => {
-                setTimeout(() => stopAndPlay(0), 300);
+                setTimeout(() => beginPlay(0), 500);
             });
         } else {
             showToast('Đây là chương đầu tiên.');
@@ -543,12 +670,28 @@ document.addEventListener('DOMContentLoaded', () => {
         updateProgress();
     });
 
-    function stopPlayback() {
-        synth.cancel();
-        currentUtterance = null;
-        iosKeepAlive.pause();
-        isPlaying = false;
-        isPaused  = false;
+    function stopPlayback(clearBuffer = true) {
+        if (clearBuffer) {
+            prefetchedBlobs.clear();
+        }
+        isPrefetching = false;
+        if (prefetchController) {
+            prefetchController.abort();
+            prefetchController = null;
+        }
+
+        
+        activeAudios.forEach(a => { 
+            a.pause(); 
+            a.ontimeupdate = null; 
+            if (a.blobUrl) {
+                URL.revokeObjectURL(a.blobUrl);
+                a.blobUrl = null;
+            }
+        });
+        activeAudios.clear();
+        
+        isPlaying = false; isPaused = false;
         document.querySelectorAll('.story-container p').forEach(p => p.classList.remove('reading-active'));
         updatePlayButton();
         updateProgress();
@@ -568,13 +711,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateProgress() {
         const total   = story.length;
-        const current = isPlaying || isPaused ? currentIndex + 1 : 0;
+        const current = isPlaying ? currentIndex + 1 : 0;
         progressText.textContent = `${current} / ${total} đoạn`;
         
-        const fillPct = total > 0 && (isPlaying || isPaused) ? `${((currentIndex + 1) / total) * 100}%` : '0%';
+        const fillPct = total > 0 && isPlaying ? `${(currentIndex / total) * 100}%` : '0%';
         progressFill.style.width = fillPct;
-        // No buffer bar with Web Speech API — progress bar always stays at same as fill
-        if (progressBuffer) progressBuffer.style.width = fillPct;
+
+        // Calculate buffer percentage
+        if (!isPlaying || total === 0) {
+            progressBuffer.style.width = '0%';
+        } else {
+            // Find consecutive buffered paragraphs
+            let bufferedCount = 0;
+            for (let i = 0; i < total; i++) {
+                if (i <= currentIndex || prefetchedBlobs.has(i)) {
+                    bufferedCount++;
+                } else {
+                    break;
+                }
+            }
+            progressBuffer.style.width = `${(bufferedCount / total) * 100}%`;
+        }
     }
 
     let toastTimer = null;
