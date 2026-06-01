@@ -69,8 +69,10 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentIndex    = 0;
     let isPlaying       = false;
     let isPaused        = false;
-    let selectedVoiceId = 'female-1';
-    let speedRate       = 1.0;
+    // Restore preferred voice from localStorage, default to 'male-1' (Nam Trầm Ấm)
+    let selectedVoiceId = localStorage.getItem('preferredVoice') || 'male-1';
+    // Restore speed rate from localStorage, default to 1.0
+    let speedRate       = parseFloat(localStorage.getItem('preferredSpeed') || '1.0');
     let currentStoryId  = null;
     let allFiles        = [];
 
@@ -241,6 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
             chip.addEventListener('click', () => {
                 if (selectedVoiceId === v.id) return;
                 selectedVoiceId = v.id;
+                localStorage.setItem('preferredVoice', v.id); // Save preference
                 prefetchedBlobs.clear();
                 document.querySelectorAll('.voice-chip').forEach(c => c.classList.remove('selected'));
                 chip.classList.add('selected');
@@ -251,9 +254,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     buildVoiceChips();
 
+    // Init speed slider display from saved value
+    rateRange.value = speedRate;
+    rateDisplay.textContent = speedRate.toFixed(1) + 'x';
+
     rateRange.addEventListener('input', () => {
         speedRate = parseFloat(rateRange.value);
         rateDisplay.textContent = speedRate.toFixed(1) + 'x';
+        localStorage.setItem('preferredSpeed', speedRate); // Save preference
         prefetchedBlobs.clear();
         activeAudios.forEach(a => { a.playbackRate = speedRate; });
     });
@@ -277,8 +285,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 resumePara.textContent = `Đang đọc đoạn ${prog.paragraphIndex + 1}`;
                 
                 resumePlayBtn.onclick = () => {
-                    loadStory(prog.storyId).then(() => {
-                        setTimeout(() => stopAndPlay(prog.paragraphIndex), 500);
+                    // Pass startIndex so prefetch begins from the right paragraph immediately
+                    loadStory(prog.storyId, null, prog.paragraphIndex).then(() => {
+                        setTimeout(() => stopAndPlay(prog.paragraphIndex), 300);
                     });
                 };
             }
@@ -357,7 +366,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     refreshBtn.addEventListener('click', fetchFiles);
 
-    async function loadStory(storyId, li) {
+    // startIndex: optional, prefetch & render scroll starts from this paragraph (used for resume)
+    async function loadStory(storyId, li, startIndex = 0) {
         currentStoryId = storyId;
         renderFileList(allFiles);
         
@@ -375,14 +385,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await (await fetch(`/api/story/${storyId}`)).json();
             if (data.error) throw new Error(data.error);
             story        = data.content;
-            currentIndex = 0;
+            currentIndex = startIndex; // Start prefetch from the right position
             headerLabelEl.textContent = 'Đang xem';
             storyTitleEl.textContent  = data.title;
             renderStoryContents();
             playerBar.style.display = 'flex';
             updateProgress();
             
-            // Initiate buffering immediately so it's ready when play begins
+            // Initiate buffering from startIndex immediately
             startPrefetchLoop();
         } catch (err) {
             storyTitleEl.textContent = 'Lỗi tải truyện';
