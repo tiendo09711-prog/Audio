@@ -25,6 +25,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const resumePara       = document.getElementById('resume-para');
     const resumePlayBtn    = document.getElementById('resume-play-btn');
 
+    const timerBtn         = document.getElementById('timer-btn');
+    const timerDisplay     = document.getElementById('timer-display');
+    const timerModal       = document.getElementById('timer-modal');
+    const cancelTimerBtn   = document.getElementById('cancel-timer-btn');
+    const confirmTimerBtn  = document.getElementById('confirm-timer-btn');
+    const disableTimerBtn  = document.getElementById('disable-timer-btn');
+    const timerHours       = document.getElementById('timer-hours');
+    const timerMinutes     = document.getElementById('timer-minutes');
+
+    const idleCheckModal   = document.getElementById('idle-check-modal');
+    const idleStopBtn      = document.getElementById('idle-stop-btn');
+    const idleContinueBtn  = document.getElementById('idle-continue-btn');
+
     const mobileMenuBtn    = document.getElementById('mobile-menu-btn');
     const sidebarEl        = document.querySelector('.sidebar');
     const sidebarOverlay   = document.getElementById('sidebar-overlay');
@@ -67,6 +80,156 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let activeAudios    = new Set();
     let fetchController = null;
+
+    let sleepTimerEnd      = null;
+    let sleepTimerInterval = null;
+    let idleCheckInterval  = null;
+    let playSessionStart   = Date.now();
+    const IDLE_TIMEOUT_MS  = 2 * 60 * 60 * 1000; // 2 hours
+    let isWaitingForIdleCheck = false;
+
+    // ─── Timer Logic ─────────────────────────────────────────────────────────
+    function populateTimerPicker() {
+        timerHours.innerHTML = '<div class="timer-picker-spacer"></div>';
+        for (let i = 0; i <= 23; i++) {
+            const div = document.createElement('div');
+            div.className = 'timer-picker-item' + (i === 0 ? ' active' : '');
+            div.textContent = i.toString().padStart(2, '0');
+            div.dataset.value = i;
+            div.onclick = () => timerHours.scrollTo({ top: i * 60, behavior: 'smooth' });
+            timerHours.appendChild(div);
+        }
+        timerHours.insertAdjacentHTML('beforeend', '<div class="timer-picker-spacer"></div>');
+
+        timerMinutes.innerHTML = '<div class="timer-picker-spacer"></div>';
+        for (let i = 0; i <= 59; i++) {
+            const div = document.createElement('div');
+            div.className = 'timer-picker-item' + (i === 0 ? ' active' : '');
+            div.textContent = i.toString().padStart(2, '0');
+            div.dataset.value = i;
+            div.onclick = () => timerMinutes.scrollTo({ top: i * 60, behavior: 'smooth' });
+            timerMinutes.appendChild(div);
+        }
+        timerMinutes.insertAdjacentHTML('beforeend', '<div class="timer-picker-spacer"></div>');
+
+        const updateActive = (container) => {
+            const items = container.querySelectorAll('.timer-picker-item');
+            const top = container.scrollTop;
+            const index = Math.round(top / 60);
+            items.forEach((item, i) => {
+                item.classList.toggle('active', i === index);
+            });
+        };
+        timerHours.addEventListener('scroll', () => updateActive(timerHours));
+        timerMinutes.addEventListener('scroll', () => updateActive(timerMinutes));
+    }
+    populateTimerPicker();
+
+    function getSelectedTimer() {
+        const h = Math.round(timerHours.scrollTop / 60);
+        const m = Math.round(timerMinutes.scrollTop / 60);
+        return { hours: h, minutes: m };
+    }
+
+    timerBtn.addEventListener('click', () => {
+        timerModal.style.display = 'flex';
+        disableTimerBtn.style.display = sleepTimerEnd ? 'block' : 'none';
+        if (!sleepTimerEnd) {
+            timerHours.scrollTo({ top: 0, behavior: 'auto' });
+            timerMinutes.scrollTo({ top: 0, behavior: 'auto' });
+        }
+    });
+    cancelTimerBtn.addEventListener('click', () => timerModal.style.display = 'none');
+    
+    function startSleepTimer(ms) {
+        clearInterval(sleepTimerInterval);
+        sleepTimerEnd = Date.now() + ms;
+        timerModal.style.display = 'none';
+        updateTimerDisplay();
+        
+        sleepTimerInterval = setInterval(() => {
+            const left = sleepTimerEnd - Date.now();
+            if (left <= 0) {
+                clearInterval(sleepTimerInterval);
+                sleepTimerEnd = null;
+                updateTimerDisplay();
+                stopPlayback();
+                showToast('Đã hết thời gian hẹn giờ. Đã dừng phát.');
+            } else {
+                updateTimerDisplay();
+            }
+        }, 1000);
+    }
+    
+    function updateTimerDisplay() {
+        if (!sleepTimerEnd) {
+            timerDisplay.textContent = 'Hẹn giờ';
+            timerBtn.style.color = '';
+            return;
+        }
+        const totalSecs = Math.max(0, Math.floor((sleepTimerEnd - Date.now()) / 1000));
+        const h = Math.floor(totalSecs / 3600);
+        const m = Math.floor((totalSecs % 3600) / 60);
+        const s = totalSecs % 60;
+        let str = '';
+        if (h > 0) str += h + ':';
+        str += m.toString().padStart(2, '0') + ':' + s.toString().padStart(2, '0');
+        timerDisplay.textContent = str;
+        timerBtn.style.color = 'var(--accent-2)';
+    }
+
+    disableTimerBtn.addEventListener('click', () => {
+        clearInterval(sleepTimerInterval);
+        sleepTimerEnd = null;
+        updateTimerDisplay();
+        timerModal.style.display = 'none';
+        showToast('Đã tắt hẹn giờ');
+    });
+
+    confirmTimerBtn.addEventListener('click', () => {
+        const { hours, minutes } = getSelectedTimer();
+        const ms = (hours * 60 * 60 + minutes * 60) * 1000;
+        if (ms === 0) {
+            showToast('Vui lòng chọn thời gian lớn hơn 0');
+            return;
+        }
+        startSleepTimer(ms);
+        showToast(`Đã hẹn giờ tắt sau ${hours} giờ ${minutes} phút`);
+    });
+
+    // ─── Idle Check Logic ───────────────────────────────────────────────────
+    function resetIdleTimer() {
+        playSessionStart = Date.now();
+    }
+    
+    function checkIdleState() {
+        if (!isPlaying || isPaused) return; // Only count when playing
+        if (sleepTimerEnd) return; // Don't ask if sleep timer is active
+        if (isWaitingForIdleCheck) return;
+        
+        const now = Date.now();
+        if (now - playSessionStart >= IDLE_TIMEOUT_MS) {
+            isWaitingForIdleCheck = true;
+            activeAudios.forEach(a => a.pause());
+            isPlaying = false; isPaused = true; updatePlayButton(); // Manually pause
+            idleCheckModal.style.display = 'flex';
+        }
+    }
+    
+    setInterval(checkIdleState, 30000); // Check every 30s
+    
+    idleStopBtn.addEventListener('click', () => {
+        idleCheckModal.style.display = 'none';
+        isWaitingForIdleCheck = false;
+        stopPlayback();
+    });
+    
+    idleContinueBtn.addEventListener('click', () => {
+        idleCheckModal.style.display = 'none';
+        isWaitingForIdleCheck = false;
+        resetIdleTimer();
+        togglePlay(); // resume
+    });
 
     function buildVoiceChips() {
         voiceGrid.innerHTML = '';
@@ -242,6 +405,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let isPrefetching = false;
 
     function stopAndPlay(index) {
+        resetIdleTimer();
         stopPlayback();
         setTimeout(() => beginPlay(index), 50);
     }
@@ -424,6 +588,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function togglePlay() {
         if (!isPlaying) {
+            resetIdleTimer();
             if (isPaused && activeAudios.size > 0) {
                 activeAudios.forEach(a => a.play().catch(()=>{}));
                 isPlaying = true; isPaused = false; updatePlayButton();

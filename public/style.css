@@ -466,6 +466,77 @@ body {
 .danger-btn { background: rgba(239,68,68,0.1); color: #ef4444; border: 1px solid rgba(239,68,68,0.3); }
 .danger-btn:hover { background: #ef4444; color: white; }
 
+/* Timer Picker */
+.timer-picker-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 16px;
+    height: 180px;
+    position: relative;
+    margin: 20px 0;
+    overflow: hidden;
+}
+.timer-picker-col {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+    height: 100%;
+}
+.timer-picker-scroll {
+    height: 100%;
+    width: 60px;
+    overflow-y: scroll;
+    scroll-snap-type: y mandatory;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE and Edge */
+    text-align: center;
+    position: relative;
+    z-index: 2;
+}
+.timer-picker-scroll::-webkit-scrollbar {
+    display: none;
+}
+.timer-picker-item {
+    height: 60px;
+    line-height: 60px;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    scroll-snap-align: center;
+    transition: all 0.2s var(--ease);
+    opacity: 0.4;
+    cursor: pointer;
+}
+.timer-picker-item.active {
+    color: var(--text);
+    font-size: 1.8rem;
+    opacity: 1;
+}
+.timer-picker-spacer {
+    height: 60px;
+}
+.timer-picker-label {
+    font-size: 1rem;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+.timer-picker-highlight {
+    position: absolute;
+    top: 50%;
+    left: 10px;
+    right: 10px;
+    height: 60px;
+    transform: translateY(-50%);
+    background: rgba(124,106,247,0.1);
+    border-top: 1px solid rgba(124,106,247,0.3);
+    border-bottom: 1px solid rgba(124,106,247,0.3);
+    border-radius: 8px;
+    pointer-events: none;
+    z-index: 1;
+}
+
 /* ─── Responsive (Mobile) ──────────────────────────────── */
 .mobile-only { display: none !important; }
 .sidebar-overlay {

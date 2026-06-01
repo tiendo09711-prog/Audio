@@ -102,10 +102,16 @@
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>
                         </button>
                     </div>
-                    <button id="stop-btn" class="icon-btn" style="margin-left: 12px; font-size: 0.85rem; padding: 0 16px; border-radius: 8px; width: auto;" title="Dừng hoàn toàn">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="margin-right:6px"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
-                        Dừng
-                    </button>
+                    <div style="display: flex; gap: 8px; margin-left: 12px; align-items: center;">
+                        <button id="timer-btn" class="icon-btn" style="font-size: 0.85rem; padding: 0 16px; border-radius: 8px; width: auto; background: var(--surface-2);" title="Hẹn giờ tắt">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            <span id="timer-display">Hẹn giờ</span>
+                        </button>
+                        <button id="stop-btn" class="icon-btn" style="font-size: 0.85rem; padding: 0 16px; border-radius: 8px; width: auto;" title="Dừng hoàn toàn">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="margin-right:6px"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
+                            Dừng
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Progress -->
@@ -144,6 +150,49 @@
             <div class="modal-actions">
                 <button id="cancel-delete-btn" class="modal-btn cancel-btn">Hủy bỏ</button>
                 <button id="confirm-delete-btn" class="modal-btn danger-btn">Vâng, Xóa ngay</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Timer Modal -->
+    <div id="timer-modal" class="modal-overlay" style="display:none;">
+        <div class="modal-content" style="padding: 16px; max-width: 320px;">
+            <h3 style="margin-bottom: 16px;">Hẹn giờ tắt</h3>
+            <div class="timer-picker-container">
+                <div class="timer-picker-col">
+                    <div class="timer-picker-scroll" id="timer-hours">
+                        <div class="timer-picker-spacer"></div>
+                        <!-- JS injects hours 0-23 -->
+                        <div class="timer-picker-spacer"></div>
+                    </div>
+                    <div class="timer-picker-label">Giờ</div>
+                </div>
+                <div class="timer-picker-col">
+                    <div class="timer-picker-scroll" id="timer-minutes">
+                        <div class="timer-picker-spacer"></div>
+                        <!-- JS injects minutes 0-59 -->
+                        <div class="timer-picker-spacer"></div>
+                    </div>
+                    <div class="timer-picker-label">Phút</div>
+                </div>
+                <div class="timer-picker-highlight"></div>
+            </div>
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button id="cancel-timer-btn" class="modal-btn cancel-btn">Hủy bỏ</button>
+                <button id="disable-timer-btn" class="modal-btn danger-btn" style="display:none;">Tắt hẹn giờ</button>
+                <button id="confirm-timer-btn" class="modal-btn" style="background: var(--grad); color: white;">Bắt đầu</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Idle Check Modal -->
+    <div id="idle-check-modal" class="modal-overlay" style="display:none;">
+        <div class="modal-content">
+            <h3>Bạn còn nghe không?</h3>
+            <p>Truyện đã phát liên tục 2 giờ. Bạn có muốn tiếp tục nghe không?</p>
+            <div class="modal-actions">
+                <button id="idle-stop-btn" class="modal-btn cancel-btn">Dừng lại</button>
+                <button id="idle-continue-btn" class="modal-btn" style="background: var(--grad); color: white;">Tiếp tục phát</button>
             </div>
         </div>
     </div>
