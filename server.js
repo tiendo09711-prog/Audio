@@ -15,7 +15,14 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public'), {
+    setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.css'))  res.setHeader('Content-Type', 'text/css; charset=utf-8');
+        if (filePath.endsWith('.js'))   res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+        if (filePath.endsWith('.html')) res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    }
+}));
 
 // ─── Mongoose Setup ────────────────────────────────────────────────────────
 // Using standard mongodb:// URI to bypass local DNS querySrv ECONNREFUSED issues on Windows
@@ -57,7 +64,7 @@ app.get('/api/progress', async (req, res) => {
     }
 });
 
-app.post('/api/progress', express.json(), async (req, res) => {
+app.post('/api/progress', async (req, res) => {
     try {
         const { storyId, title, paragraphIndex } = req.body;
         if (!storyId) return res.status(400).json({ error: 'Missing storyId' });
@@ -231,6 +238,15 @@ app.delete('/api/story/:id', async (req, res) => {
     } catch (error) {
         res.status(500).json({ error: 'Failed to delete' });
     }
+});
+
+// Catch-all for unmatched routes – helps diagnose 404s
+app.use((req, res) => {
+    if (req.path.startsWith('/api/')) {
+        return res.status(404).json({ error: `Route not found: ${req.method} ${req.path}` });
+    }
+    // For everything else, serve index.html (SPA fallback)
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.listen(PORT, () => {
