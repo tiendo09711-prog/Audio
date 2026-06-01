@@ -9,7 +9,6 @@ const path = require('path');
 const cheerio = require('cheerio');
 const mongoose = require('mongoose');
 const multer = require('multer');
-const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -90,54 +89,6 @@ const VOICE_CONFIGS = {
     'male-3':   { voice: 'vi-VN-NamMinhNeural',  rate: '+18%', pitch: '+5Hz',   label: 'Nam Rõ Ràng'  },
 };
 
-app.get('/api/tts', async (req, res) => {
-    const text = req.query.text;
-    const voiceId = req.query.voice || 'female-1';
-
-    if (!text) return res.status(400).send('Missing text');
-    const cfg = VOICE_CONFIGS[voiceId] || VOICE_CONFIGS['female-1'];
-
-    let tts = null;
-    try {
-        tts = new MsEdgeTTS();
-        await tts.setMetadata(cfg.voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-
-        const { audioStream } = tts.toStream(text, { rate: cfg.rate, pitch: cfg.pitch });
-
-        const chunks = [];
-        let errored = false;
-
-        audioStream.on('data', chunk => chunks.push(chunk));
-
-        audioStream.on('close', () => {
-            if (tts) { tts.close(); tts = null; }
-            if (errored) return;
-            const audio = Buffer.concat(chunks);
-            if (audio.length === 0) {
-                return res.status(500).json({ error: 'Empty TTS response' });
-            }
-            res.setHeader('Content-Type', 'audio/mpeg');
-            res.setHeader('Content-Length', audio.length);
-            res.end(audio);
-        });
-
-        audioStream.on('error', err => {
-            errored = true;
-            if (tts) { tts.close(); tts = null; }
-            console.error('Edge TTS stream error:', err.message);
-            if (!res.headersSent) res.status(500).json({ error: err.message });
-        });
-
-    } catch (err) {
-        if (tts) { tts.close(); tts = null; }
-        console.error('TTS error:', err.message);
-        if (!res.headersSent) res.status(500).json({ error: err.message });
-    }
-});
-
-app.get('/api/voices', (req, res) => {
-    res.json({ voices: Object.entries(VOICE_CONFIGS).map(([id, cfg]) => ({ id, label: cfg.label })) });
-});
 
 // ─── Database Endpoints ────────────────────────────────────────────────────
 
