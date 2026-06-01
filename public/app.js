@@ -61,6 +61,10 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentStoryId  = null;
     let allFiles        = [];
 
+    // Pool of 2 audio elements to avoid iOS memory limits and NotAllowed errors from creating too many
+    const audioPool = [new Audio(), new Audio()];
+    let poolIndex = 0;
+
     let activeAudios    = new Set();
     let fetchController = null;
 
@@ -346,12 +350,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 activeAudios.forEach(a => { 
                     a.pause(); 
                     a.ontimeupdate = null; 
-                    if (a.blobUrl) URL.revokeObjectURL(a.blobUrl);
+                    if (a.blobUrl) {
+                        URL.revokeObjectURL(a.blobUrl);
+                        a.blobUrl = null;
+                    }
                 });
                 activeAudios.clear();
             }
 
-            const audio = new Audio(blobUrl);
+            const audio = audioPool[poolIndex];
+            poolIndex = (poolIndex + 1) % 2;
+            
+            // Cleanup previous blob on this audio element if any
+            if (audio.blobUrl && audio.blobUrl !== blobUrl) {
+                URL.revokeObjectURL(audio.blobUrl);
+            }
+
+            audio.src = blobUrl;
             audio.playbackRate = speedRate;
             audio.blobUrl = blobUrl;
             activeAudios.add(audio);
@@ -367,11 +382,14 @@ document.addEventListener('DOMContentLoaded', () => {
             
             audio.onended = () => {
                 activeAudios.delete(audio);
-                URL.revokeObjectURL(blobUrl);
+                if (audio.blobUrl === blobUrl) {
+                    URL.revokeObjectURL(blobUrl);
+                    audio.blobUrl = null;
+                }
             };
 
             audio.onerror = () => {
-                console.error('Audio object error');
+                console.error('Audio object error', audio.error);
                 showToast('Lỗi phát âm thanh. Đang thử đoạn tiếp...');
                 if (isPlaying && !hasStartedNext) {
                     hasStartedNext = true;
@@ -469,7 +487,10 @@ document.addEventListener('DOMContentLoaded', () => {
         activeAudios.forEach(a => { 
             a.pause(); 
             a.ontimeupdate = null; 
-            if (a.blobUrl) URL.revokeObjectURL(a.blobUrl);
+            if (a.blobUrl) {
+                URL.revokeObjectURL(a.blobUrl);
+                a.blobUrl = null;
+            }
         });
         activeAudios.clear();
         
