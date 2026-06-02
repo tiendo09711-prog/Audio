@@ -750,6 +750,65 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const uploadBtn        = document.getElementById('upload-btn');
     const uploadInput      = document.getElementById('upload-input');
+    const pasteBtn         = document.getElementById('paste-btn');
+    const pasteModal       = document.getElementById('paste-modal');
+    const pasteTitle       = document.getElementById('paste-title');
+    const pasteContent     = document.getElementById('paste-content');
+    const cancelPasteBtn   = document.getElementById('cancel-paste-btn');
+    const submitPasteBtn   = document.getElementById('submit-paste-btn');
+
+    // ─── Paste Document Logic ──────────────────────────────────────────────────
+    if (pasteBtn && pasteModal) {
+        pasteBtn.addEventListener('click', () => {
+            pasteTitle.value = '';
+            pasteContent.value = '';
+            pasteModal.style.display = 'flex';
+        });
+
+        cancelPasteBtn.addEventListener('click', () => {
+            pasteModal.style.display = 'none';
+        });
+
+        submitPasteBtn.addEventListener('click', async () => {
+            const title = pasteTitle.value.trim();
+            const content = pasteContent.value.trim();
+            
+            if (!title) {
+                showToast('Vui lòng nhập tên chương!');
+                return;
+            }
+            if (!content) {
+                showToast('Vui lòng nhập nội dung!');
+                return;
+            }
+
+            const oldText = submitPasteBtn.textContent;
+            submitPasteBtn.textContent = 'Đang xử lý...';
+            submitPasteBtn.disabled = true;
+
+            try {
+                const res = await fetch('/api/paste', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, content })
+                });
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showToast(data.message || 'Đăng chương thành công!');
+                    pasteModal.style.display = 'none';
+                    fetchFiles(); // Refresh list
+                } else {
+                    showToast(`Lỗi: ${data.error}`);
+                }
+            } catch (err) {
+                showToast('Lỗi khi gửi dữ liệu lên máy chủ.');
+            } finally {
+                submitPasteBtn.textContent = oldText;
+                submitPasteBtn.disabled = false;
+            }
+        });
+    }
 
     // ─── Upload Logic ─────────────────────────────────────────────────────────
     uploadBtn.addEventListener('click', () => uploadInput.click());

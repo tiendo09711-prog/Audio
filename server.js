@@ -226,6 +226,33 @@ app.post('/api/upload', upload.array('htmlFiles'), async (req, res) => {
     }
 });
 
+app.post('/api/paste', async (req, res) => {
+    try {
+        const { title, content } = req.body;
+        if (!title || !content) {
+            return res.status(400).json({ error: 'Missing title or content' });
+        }
+
+        const paragraphs = content.split(/\r?\n/).map(p => p.trim()).filter(p => p.length > 0);
+        
+        if (paragraphs.length === 0) {
+            return res.status(400).json({ error: 'Nội dung trống' });
+        }
+
+        const newStory = new Story({
+            title: title.trim(),
+            content: paragraphs,
+            originalFilename: 'pasted_document'
+        });
+
+        await newStory.save();
+        res.json({ success: true, message: 'Đăng chương thành công!', id: newStory._id });
+    } catch (error) {
+        console.error('Paste Error:', error);
+        res.status(500).json({ error: 'Lỗi khi lưu chương' });
+    }
+});
+
 // Xóa file (Bonus functionality for managing DB)
 app.delete('/api/story/:id', async (req, res) => {
     try {
