@@ -42,6 +42,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const sidebarEl        = document.querySelector('.sidebar');
     const sidebarOverlay   = document.getElementById('sidebar-overlay');
 
+    const downloadMp3Btn = document.getElementById('download-mp3-btn');
+    const downloadMp3Modal = document.getElementById('download-mp3-modal');
+    const downloadMp3TargetName = document.getElementById('download-mp3-target-name');
+    const cancelDownloadMp3Btn = document.getElementById('cancel-download-mp3-btn');
+    const confirmDownloadMp3Btn = document.getElementById('confirm-download-mp3-btn');
+
+    const slowDownloadModal = document.getElementById('slow-download-modal');
+    const cancelSlowDownloadBtn = document.getElementById('cancel-slow-download-btn');
+    const confirmSlowDownloadBtn = document.getElementById('confirm-slow-download-btn');
+
     if (mobileMenuBtn && sidebarEl && sidebarOverlay) {
         mobileMenuBtn.addEventListener('click', () => {
             sidebarEl.classList.add('open');
@@ -350,6 +360,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const editBtn = document.getElementById('edit-story-btn');
         if (editBtn) editBtn.style.display = 'none';
+        if (downloadMp3Btn) downloadMp3Btn.style.display = 'none';
 
         stopPlayback();
         storyContainerEl.innerHTML = `<div class="empty-state"><div class="empty-icon">
@@ -365,6 +376,7 @@ document.addEventListener('DOMContentLoaded', () => {
             storyTitleEl.textContent  = data.title;
             const editBtn = document.getElementById('edit-story-btn');
             if (editBtn) editBtn.style.display = 'block';
+            if (downloadMp3Btn) downloadMp3Btn.style.display = 'block';
             renderStoryContents();
             playerBar.style.display = 'flex';
             updateProgress();
@@ -514,11 +526,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 startPrefetchLoop(); // ensure prefetch is running
                 
                 let waitTime = 0;
+                let hasPromptedSlow = false;
                 // Wait up to 15 seconds - if still stuck, skip this paragraph
                 while (!prefetchedBlobs.has(index) && waitTime < 15000) {
                     if (!isPlaying || currentIndex !== index) return;
                     await new Promise(r => setTimeout(r, 500));
                     waitTime += 500;
+                    
+                    if (waitTime >= 5000 && !hasPromptedSlow && slowDownloadModal) {
+                        hasPromptedSlow = true;
+                        slowDownloadModal.style.display = 'flex';
+                    }
                 }
                 
                 document.getElementById(`para-${index}`)?.classList.remove('para-loading');
@@ -807,6 +825,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     showToast(`Lỗi: ${data.error}`);
                 }
             } catch (err) {
+                console.error(err);
                 showToast('Lỗi khi gửi dữ liệu lên máy chủ.');
             } finally {
                 submitPasteBtn.textContent = oldText;
@@ -912,6 +931,47 @@ document.addEventListener('DOMContentLoaded', () => {
             uploadInput.value = ''; // Reset input
         }
     });
+
+    // ─── MP3 Download Logic ────────────────────────────────────────────────
+    if (downloadMp3Btn && downloadMp3Modal) {
+        downloadMp3Btn.addEventListener('click', () => {
+            if (!currentStoryId) return;
+            const currentTitle = allFiles.find(f => f.id === currentStoryId)?.title || 'Chương không tên';
+            downloadMp3TargetName.textContent = currentTitle;
+            downloadMp3Modal.style.display = 'flex';
+        });
+        cancelDownloadMp3Btn.addEventListener('click', () => {
+            downloadMp3Modal.style.display = 'none';
+        });
+        confirmDownloadMp3Btn.addEventListener('click', () => {
+            downloadMp3Modal.style.display = 'none';
+            if (!currentStoryId) return;
+            showToast('Bắt đầu tải file MP3... Vui lòng đợi trong giây lát.');
+            const a = document.createElement('a');
+            a.href = `/api/download-chapter/${currentStoryId}`;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        });
+    }
+
+    if (slowDownloadModal) {
+        cancelSlowDownloadBtn.addEventListener('click', () => {
+            slowDownloadModal.style.display = 'none';
+        });
+        confirmSlowDownloadBtn.addEventListener('click', () => {
+            slowDownloadModal.style.display = 'none';
+            if (!currentStoryId) return;
+            showToast('Bắt đầu tải file MP3... Vui lòng đợi trong giây lát.');
+            const a = document.createElement('a');
+            a.href = `/api/download-chapter/${currentStoryId}`;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        });
+    }
 
     fetchFiles();
     updatePlayButton();
