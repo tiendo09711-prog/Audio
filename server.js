@@ -263,6 +263,37 @@ app.delete('/api/story/:id', async (req, res) => {
     }
 });
 
+// Sửa file
+app.put('/api/story/:id', async (req, res) => {
+    try {
+        const { title, content } = req.body;
+        if (!title || !content) {
+            return res.status(400).json({ error: 'Missing title or content' });
+        }
+
+        const paragraphs = content.split(/\r?\n/).map(p => p.trim()).filter(p => p.length > 0);
+        
+        if (paragraphs.length === 0) {
+            return res.status(400).json({ error: 'Nội dung trống' });
+        }
+
+        const updatedStory = await Story.findByIdAndUpdate(
+            req.params.id, 
+            { title: title.trim(), content: paragraphs }, 
+            { new: true }
+        );
+
+        if (!updatedStory) {
+            return res.status(404).json({ error: 'Không tìm thấy truyện' });
+        }
+
+        res.json({ success: true, message: 'Cập nhật thành công!' });
+    } catch (error) {
+        console.error('Update Error:', error);
+        res.status(500).json({ error: 'Lỗi khi cập nhật chương' });
+    }
+});
+
 // Catch-all for unmatched routes – helps diagnose 404s
 app.use((req, res) => {
     if (req.path.startsWith('/api/')) {

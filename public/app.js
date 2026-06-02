@@ -348,6 +348,9 @@ document.addEventListener('DOMContentLoaded', () => {
             sidebarOverlay.style.display = 'none';
         }
 
+        const editBtn = document.getElementById('edit-story-btn');
+        if (editBtn) editBtn.style.display = 'none';
+
         stopPlayback();
         storyContainerEl.innerHTML = `<div class="empty-state"><div class="empty-icon">
             <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -360,6 +363,8 @@ document.addEventListener('DOMContentLoaded', () => {
             currentIndex = startIndex; // Start prefetch from the right position
             headerLabelEl.textContent = 'Đang xem';
             storyTitleEl.textContent  = data.title;
+            const editBtn = document.getElementById('edit-story-btn');
+            if (editBtn) editBtn.style.display = 'block';
             renderStoryContents();
             playerBar.style.display = 'flex';
             updateProgress();
@@ -806,6 +811,71 @@ document.addEventListener('DOMContentLoaded', () => {
             } finally {
                 submitPasteBtn.textContent = oldText;
                 submitPasteBtn.disabled = false;
+            }
+        });
+    }
+
+    // ─── Edit Document Logic ──────────────────────────────────────────────────
+    const editModal       = document.getElementById('edit-modal');
+    const editTitle       = document.getElementById('edit-title');
+    const editContent     = document.getElementById('edit-content');
+    const cancelEditBtn   = document.getElementById('cancel-edit-btn');
+    const submitEditBtn   = document.getElementById('submit-edit-btn');
+    const editStoryBtn    = document.getElementById('edit-story-btn');
+
+    if (editStoryBtn && editModal) {
+        editStoryBtn.addEventListener('click', () => {
+            if (!currentStoryId || story.length === 0) return;
+            editTitle.value = storyTitleEl.textContent;
+            editContent.value = story.join('\n\n'); // join paragraphs
+            editModal.style.display = 'flex';
+        });
+
+        cancelEditBtn.addEventListener('click', () => {
+            editModal.style.display = 'none';
+        });
+
+        submitEditBtn.addEventListener('click', async () => {
+            if (!currentStoryId) return;
+            const title = editTitle.value.trim();
+            const content = editContent.value.trim();
+            
+            if (!title) {
+                showToast('Vui lòng nhập tên chương!');
+                return;
+            }
+            if (!content) {
+                showToast('Vui lòng nhập nội dung!');
+                return;
+            }
+
+            const oldText = submitEditBtn.textContent;
+            submitEditBtn.textContent = 'Đang xử lý...';
+            submitEditBtn.disabled = true;
+
+            try {
+                const res = await fetch(`/api/story/${currentStoryId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, content })
+                });
+                const data = await res.json();
+                
+                if (res.ok) {
+                    showToast(data.message || 'Cập nhật thành công!');
+                    editModal.style.display = 'none';
+                    // Re-fetch files to update sidebar title
+                    fetchFiles();
+                    // Re-load current story to show updated content
+                    loadStory(currentStoryId);
+                } else {
+                    showToast(`Lỗi: ${data.error}`);
+                }
+            } catch (err) {
+                showToast('Lỗi khi gửi dữ liệu lên máy chủ.');
+            } finally {
+                submitEditBtn.textContent = oldText;
+                submitEditBtn.disabled = false;
             }
         });
     }
