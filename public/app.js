@@ -550,15 +550,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (prefetchedBlobs.has(i) || isPunctuationOnly(story[i])) bufferedCount++;
                     else break;
                 }
-                const halfChapter = Math.ceil(story.length / 2);
-                const isBeforeHalf = index < halfChapter;
-                
-                if (isBeforeHalf && (index + bufferedCount) >= halfChapter) {
+                if (bufferedCount >= 5 || (index + bufferedCount) >= story.length) {
                     currentVoice = 'vip';
-                    showToast('Đã tải đến nửa chương, quay lại Giọng VIP.');
-                } else if (!isBeforeHalf && (index + bufferedCount) >= story.length) {
-                    currentVoice = 'vip';
-                    showToast('Đã tải đến hết chương, quay lại Giọng VIP.');
+                    showToast('Đã tải trước 5 đoạn, quay lại Giọng VIP.');
                 }
             } else {
                 currentVoice = 'vip';
