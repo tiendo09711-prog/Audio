@@ -45,6 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const modeAutoBtn = document.getElementById('mode-auto-btn');
     const modeVipBtn = document.getElementById('mode-vip-btn');
     const modeNormalBtn = document.getElementById('mode-normal-btn');
+    const modeSleepBtn = document.getElementById('mode-sleep-btn');
     
     let voiceMode = 'auto';
     let currentVoice = 'vip';
@@ -68,12 +69,14 @@ document.addEventListener('DOMContentLoaded', () => {
         modeAutoBtn.style.cssText = voiceMode === 'auto' ? activeStyle : inactiveStyle;
         modeVipBtn.style.cssText = voiceMode === 'vip' ? activeStyle : inactiveStyle;
         modeNormalBtn.style.cssText = voiceMode === 'normal' ? activeStyle : inactiveStyle;
+        if (modeSleepBtn) modeSleepBtn.style.cssText = voiceMode === 'sleep' ? activeStyle : inactiveStyle;
     }
 
     if (modeAutoBtn) {
         modeAutoBtn.addEventListener('click', () => { voiceMode = 'auto'; currentVoice = 'vip'; updateModeButtons(); stopPlayback(false); beginPlay(currentIndex); });
         modeVipBtn.addEventListener('click', () => { voiceMode = 'vip'; currentVoice = 'vip'; updateModeButtons(); stopPlayback(false); beginPlay(currentIndex); });
         modeNormalBtn.addEventListener('click', () => { voiceMode = 'normal'; currentVoice = 'normal'; updateModeButtons(); stopPlayback(false); beginPlay(currentIndex); });
+        if (modeSleepBtn) modeSleepBtn.addEventListener('click', () => { voiceMode = 'sleep'; currentVoice = 'vip'; updateModeButtons(); stopPlayback(false); beginPlay(currentIndex); });
         updateModeButtons();
     }
 
@@ -557,6 +560,8 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 currentVoice = 'vip';
             }
+        } else if (voiceMode === 'sleep') {
+            currentVoice = 'vip';
         } else {
             currentVoice = voiceMode;
         }
@@ -585,6 +590,29 @@ document.addEventListener('DOMContentLoaded', () => {
                         playWithBrowserVoice(index);
                         return;
                     }
+                } else if (voiceMode === 'sleep') {
+                    showToast('Đang tải đệm 5 đoạn (Chế độ Đi Ngủ)...');
+                    document.getElementById(`para-${index}`)?.classList.add('para-loading');
+                    
+                    let waitTime = 0;
+                    while (waitTime < 60000) {
+                        if (!isPlaying || currentIndex !== index) return;
+                        
+                        let bufferedCount = 0;
+                        for (let i = index; i < story.length; i++) {
+                            if (prefetchedBlobs.has(i) || isPunctuationOnly(story[i])) bufferedCount++;
+                            else break;
+                        }
+                        
+                        if (bufferedCount >= 5 || (index + bufferedCount) >= story.length) {
+                            break;
+                        }
+                        
+                        await new Promise(r => setTimeout(r, 500));
+                        waitTime += 500;
+                    }
+                    
+                    document.getElementById(`para-${index}`)?.classList.remove('para-loading');
                 } else {
                     showToast('Đang tải đệm âm thanh (Buffering)...');
                     document.getElementById(`para-${index}`)?.classList.add('para-loading');
