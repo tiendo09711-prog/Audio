@@ -95,10 +95,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (modeAutoBtn) {
-        modeAutoBtn.addEventListener('click', () => { voiceMode = 'auto'; currentVoice = 'vip'; updateModeButtons(); stopPlayback(false); beginPlay(currentIndex); });
-        modeVipBtn.addEventListener('click', () => { voiceMode = 'vip'; currentVoice = 'vip'; updateModeButtons(); stopPlayback(false); beginPlay(currentIndex); });
-        modeNormalBtn.addEventListener('click', () => { voiceMode = 'normal'; currentVoice = 'normal'; updateModeButtons(); stopPlayback(false); beginPlay(currentIndex); });
-        if (modeSleepBtn) modeSleepBtn.addEventListener('click', () => { voiceMode = 'sleep'; currentVoice = 'vip'; updateModeButtons(); stopPlayback(false); beginPlay(currentIndex); });
+        const handleModeChange = (newMode, defaultVoice) => {
+            voiceMode = newMode;
+            currentVoice = defaultVoice;
+            updateModeButtons();
+            const wasPlaying = isPlaying && !isPaused;
+            if (wasPlaying) {
+                stopPlayback(false);
+                setTimeout(() => beginPlay(currentIndex), 50);
+            }
+        };
+
+        modeAutoBtn.addEventListener('click', () => handleModeChange('auto', 'vip'));
+        modeVipBtn.addEventListener('click', () => handleModeChange('vip', 'vip'));
+        modeNormalBtn.addEventListener('click', () => handleModeChange('normal', 'normal'));
+        if (modeSleepBtn) modeSleepBtn.addEventListener('click', () => handleModeChange('sleep', 'vip'));
         updateModeButtons();
     }
 
@@ -1059,7 +1070,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!currentStoryId) return;
         const idx = allFiles.findIndex(f => f.id === currentStoryId);
         if (idx !== -1 && idx < allFiles.length - 1) {
-            loadStory(allFiles[idx + 1].id).then(() => {
+            loadChapter(allFiles[idx + 1].id).then(() => {
                 setTimeout(() => beginPlay(0), 500);
             });
         } else {
@@ -1071,7 +1082,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!currentStoryId) return;
         const idx = allFiles.findIndex(f => f.id === currentStoryId);
         if (idx > 0) {
-            loadStory(allFiles[idx - 1].id).then(() => {
+            loadChapter(allFiles[idx - 1].id).then(() => {
                 setTimeout(() => beginPlay(0), 500);
             });
         } else {
@@ -1080,8 +1091,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     playBtn.addEventListener('click', togglePlay);
-    prevBtn.addEventListener('click', () => { if (currentIndex > 0) stopAndPlay(currentIndex - 1); });
-    nextBtn.addEventListener('click', () => { if (currentIndex < story.length - 1) stopAndPlay(currentIndex + 1); });
+    prevBtn.addEventListener('click', () => { 
+        if (currentIndex > 0) {
+            stopAndPlay(currentIndex - 1); 
+        } else {
+            playPrevChapter();
+        }
+    });
+    nextBtn.addEventListener('click', () => { 
+        stopAndPlay(currentIndex + 1); 
+    });
     prevChapBtn.addEventListener('click', playPrevChapter);
     nextChapBtn.addEventListener('click', playNextChapter);
     stopBtn.addEventListener('click',  () => {
