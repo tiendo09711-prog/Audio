@@ -42,6 +42,28 @@ document.addEventListener('DOMContentLoaded', () => {
     const sidebarEl        = document.querySelector('.sidebar');
     const sidebarOverlay   = document.getElementById('sidebar-overlay');
 
+    // Home View Elements
+    const homeView         = document.getElementById('home-view');
+    const playerView       = document.getElementById('player-view');
+    const bookGrid         = document.getElementById('book-grid');
+    const backToHomeBtn    = document.getElementById('back-to-home-btn');
+    const addBookBtn       = document.getElementById('add-book-btn');
+    const globalResumeCard = document.getElementById('global-resume-card');
+    const globalResumeBook = document.getElementById('global-resume-book');
+    const globalResumeChapter = document.getElementById('global-resume-chapter');
+    const globalResumePlayBtn = document.getElementById('global-resume-play-btn');
+
+    // Add Book Modal Elements
+    const addBookModal     = document.getElementById('add-book-modal');
+    const cancelAddBookBtn = document.getElementById('cancel-add-book-btn');
+    const submitAddBookBtn = document.getElementById('submit-add-book-btn');
+    const coverTypeUrlBtn  = document.getElementById('cover-type-url');
+    const coverTypeFileBtn = document.getElementById('cover-type-file');
+    const bookCoverUrlInput= document.getElementById('book-cover-url');
+    const bookCoverFileInput= document.getElementById('book-cover-file');
+    
+    let currentBookId = null;
+
     const modeAutoBtn = document.getElementById('mode-auto-btn');
     const modeVipBtn = document.getElementById('mode-vip-btn');
     const modeNormalBtn = document.getElementById('mode-normal-btn');
@@ -104,12 +126,44 @@ document.addEventListener('DOMContentLoaded', () => {
     let speedRate       = parseFloat(localStorage.getItem('preferredSpeed') || '1.0');
     let currentStoryId  = null;
     let allFiles        = [];
+    let allBooks        = [];
 
     // Pool of 2 audio elements to avoid iOS memory limits and NotAllowed errors from creating too many
     const audioPool = [new Audio(), new Audio()];
     let poolIndex = 0;
+    let activeAudios = new Set();
+    
+    // iOS Web Audio Unlock & KeepAlive
+    const SILENT_WAV = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+    let isAudioUnlocked = false;
+    let keepAliveAudio = new Audio();
+    keepAliveAudio.loop = true;
+    keepAliveAudio.src = SILENT_WAV;
 
-    let activeAudios    = new Set();
+    function unlockAudio() {
+        if (isAudioUnlocked) return;
+        audioPool.forEach(a => {
+            a.src = SILENT_WAV;
+            a.play().then(() => {
+                a.pause();
+            }).catch(() => {});
+        });
+        keepAliveAudio.play().then(() => {
+            keepAliveAudio.pause();
+        }).catch(() => {});
+        isAudioUnlocked = true;
+    }
+
+    document.body.addEventListener('click', unlockAudio, { once: true });
+    document.body.addEventListener('touchstart', unlockAudio, { once: true });
+
+    function startKeepAlive() {
+        keepAliveAudio.play().catch(() => {});
+    }
+    
+    function stopKeepAlive() {
+        keepAliveAudio.pause();
+    }
     let fetchController = null;
 
     let sleepTimerEnd      = null;
@@ -280,40 +334,259 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    async function fetchFiles() {
+    // ─── Add Book Logic ────────────────────────────────────────────────────────
+    let currentCoverType = 'url';
+    if (coverTypeUrlBtn) {
+        coverTypeUrlBtn.addEventListener('click', () => {
+            currentCoverType = 'url';
+            coverTypeUrlBtn.style.background = 'var(--surface-2)';
+            coverTypeUrlBtn.style.color = 'var(--primary)';
+            coverTypeUrlBtn.style.border = '1px solid var(--primary)';
+            coverTypeFileBtn.style.background = 'var(--surface-2)';
+            coverTypeFileBtn.style.color = 'var(--text)';
+            coverTypeFileBtn.style.border = '1px solid var(--border-2)';
+            bookCoverUrlInput.style.display = 'block';
+            bookCoverFileInput.style.display = 'none';
+        });
+        coverTypeFileBtn.addEventListener('click', () => {
+            currentCoverType = 'file';
+            coverTypeFileBtn.style.background = 'var(--surface-2)';
+            coverTypeFileBtn.style.color = 'var(--primary)';
+            coverTypeFileBtn.style.border = '1px solid var(--primary)';
+            coverTypeUrlBtn.style.background = 'var(--surface-2)';
+            coverTypeUrlBtn.style.color = 'var(--text)';
+            coverTypeUrlBtn.style.border = '1px solid var(--border-2)';
+            bookCoverUrlInput.style.display = 'none';
+            bookCoverFileInput.style.display = 'block';
+        });
+
+        addBookBtn.addEventListener('click', () => {
+            addBookModal.style.display = 'flex';
+        });
+        cancelAddBookBtn.addEventListener('click', () => {
+            addBookModal.style.display = 'none';
+        });
+
+        submitAddBookBtn.addEventListener('click', async () => {
+            const title = document.getElementById('book-title').value.trim();
+            const desc = document.getElementById('book-desc').value.trim();
+            if (!title) return showToast('Vui lòng nhập tên truyện!');
+
+            const formData = new FormData();
+            formData.append('title', title);
+            formData.append('description', desc);
+            formData.append('coverType', currentCoverType);
+            
+            if (currentCoverType === 'url') {
+                formData.append('coverUrl', bookCoverUrlInput.value.trim());
+            } else {
+                if (bookCoverFileInput.files.length > 0) {
+                    formData.append('coverFile', bookCoverFileInput.files[0]);
+                }
+            }
+
+            const oldText = submitAddBookBtn.textContent;
+            submitAddBookBtn.textContent = 'Đang tạo...';
+            submitAddBookBtn.disabled = true;
+
+            try {
+                const res = await fetch('/api/books', { method: 'POST', body: formData });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast('Tạo truyện thành công!');
+                    addBookModal.style.display = 'none';
+                    document.getElementById('book-title').value = '';
+                    document.getElementById('book-desc').value = '';
+                    fetchBooks();
+                } else {
+                    showToast(`Lỗi: ${data.error}`);
+                }
+            } catch (err) {
+                showToast('Lỗi khi tạo truyện');
+            } finally {
+                submitAddBookBtn.textContent = oldText;
+                submitAddBookBtn.disabled = false;
+            }
+        });
+    }
+
+    if (backToHomeBtn) {
+        backToHomeBtn.addEventListener('click', () => {
+            playerView.style.display = 'none';
+            homeView.style.display = 'flex';
+            currentBookId = null;
+            stopPlayback();
+            fetchBooks();
+        });
+    }
+
+    const tabAllBooks = document.getElementById('tab-all-books');
+    const tabHistory = document.getElementById('tab-history');
+    const historyGrid = document.getElementById('history-grid');
+
+    if (tabAllBooks && tabHistory) {
+        tabAllBooks.addEventListener('click', () => {
+            tabAllBooks.style.opacity = '1';
+            tabAllBooks.style.borderBottom = '2px solid var(--primary)';
+            tabHistory.style.opacity = '0.6';
+            tabHistory.style.borderBottom = '2px solid transparent';
+            bookGrid.style.display = 'grid';
+            historyGrid.style.display = 'none';
+            globalResumeCard.style.display = 'flex'; // show global resume if any
+        });
+
+        tabHistory.addEventListener('click', () => {
+            tabHistory.style.opacity = '1';
+            tabHistory.style.borderBottom = '2px solid var(--primary)';
+            tabAllBooks.style.opacity = '0.6';
+            tabAllBooks.style.borderBottom = '2px solid transparent';
+            historyGrid.style.display = 'grid';
+            bookGrid.style.display = 'none';
+            globalResumeCard.style.display = 'none'; // hide global resume when viewing history
+        });
+    }
+
+    async function fetchBooks() {
         try {
-            fileListEl.innerHTML = '<li class="file-list-loading">Đang tải danh sách...</li>';
-            const [dataRes, progRes] = await Promise.all([
-                fetch('/api/files'),
+            bookGrid.innerHTML = '<div class="file-list-loading">Đang tải kho truyện...</div>';
+            historyGrid.innerHTML = '<div class="file-list-loading">Đang tải lịch sử...</div>';
+            
+            const [booksRes, progRes] = await Promise.all([
+                fetch('/api/books'),
                 fetch('/api/progress')
             ]);
-            const data = await dataRes.json();
-            const prog = await progRes.json();
+            const booksData = await booksRes.json();
+            const progList = await progRes.json(); // Now returns array of progress
             
-            allFiles = data.files || [];
-            renderFileList(allFiles);
+            allBooks = booksData.books || [];
+            renderBookGrid(allBooks);
+            renderHistoryGrid(progList || []);
             
-            if (prog && prog.storyId) {
-                resumeCard.style.display = 'block';
-                resumeTitle.textContent = prog.title || 'Chương không tên';
-                resumePara.textContent = `Đang đọc đoạn ${prog.paragraphIndex + 1}`;
+            const validProg = (progList || []).find(p => p.bookId);
+            if (validProg) {
+                globalResumeCard.style.display = 'flex';
+                const bTitle = validProg.bookId.title;
+                const cTitle = validProg.chapterId ? validProg.chapterId.title : validProg.chapterTitle;
+                globalResumeBook.textContent = bTitle;
+                globalResumeChapter.textContent = cTitle || '';
                 
-                resumePlayBtn.onclick = () => {
-                    // Pass startIndex so prefetch begins from the right paragraph immediately
-                    loadStory(prog.storyId, null, prog.paragraphIndex).then(() => {
-                        setTimeout(() => stopAndPlay(prog.paragraphIndex), 300);
-                    });
+                globalResumePlayBtn.onclick = () => {
+                    const bid = validProg.bookId._id;
+                    const cid = validProg.chapterId ? validProg.chapterId._id : validProg.chapterId;
+                    openBook(bid, cid, 0); 
                 };
+            } else {
+                globalResumeCard.style.display = 'none';
             }
-        } catch {
-            fileListEl.innerHTML = '<li class="file-list-loading" style="color:#ef4444">Lỗi: Kiểm tra server đang chạy.</li>';
+        } catch (err) {
+            bookGrid.innerHTML = '<div class="file-list-loading" style="color:#ef4444">Lỗi tải dữ liệu.</div>';
         }
     }
 
-    function renderFileList(filesToRender) {
+    function renderHistoryGrid(historyList) {
+        historyGrid.innerHTML = '';
+        if (!historyList.length) {
+            historyGrid.innerHTML = '<div class="file-list-loading">Bạn chưa đọc truyện nào.</div>';
+            return;
+        }
+        
+        historyList.forEach(prog => {
+            if (!prog.bookId) return; // Skip if book deleted
+            
+            const card = document.createElement('div');
+            card.className = 'book-card';
+            
+            const bid = prog.bookId._id || prog.bookId;
+            const cid = prog.chapterId ? (prog.chapterId._id || prog.chapterId) : null;
+            card.onclick = () => openBook(bid, cid, 0);
+            
+            let coverHtml = `<div class="book-cover-placeholder">Không có ảnh</div>`;
+            if (prog.bookId.coverImage && prog.bookId.coverType !== 'none') {
+                coverHtml = `<div class="book-cover" style="background-image: url('${prog.bookId.coverImage}')"></div>`;
+            }
+            
+            const cTitle = prog.chapterId ? prog.chapterId.title : (prog.chapterTitle || 'Đang bắt đầu');
+            
+            card.innerHTML = `
+                ${coverHtml}
+                <div class="book-info">
+                    <div class="book-title" title="${prog.bookId.title}">${prog.bookId.title}</div>
+                    <div class="book-desc" style="color: var(--primary); font-weight: 600;" title="${cTitle}">Đang đọc: ${cTitle}</div>
+                    <div class="book-chapter-count" style="font-size: 0.75rem; color: var(--text-dim);">Cập nhật: ${new Date(prog.updatedAt).toLocaleDateString('vi-VN')}</div>
+                </div>
+            `;
+            historyGrid.appendChild(card);
+        });
+    }
+
+    function renderBookGrid(books) {
+        bookGrid.innerHTML = '';
+        if (!books.length) {
+            bookGrid.innerHTML = '<div class="file-list-loading">Chưa có truyện nào trong kho.</div>';
+            return;
+        }
+        books.forEach(book => {
+            const card = document.createElement('div');
+            card.className = 'book-card';
+            card.onclick = () => openBook(book._id);
+            
+            let coverHtml = `<div class="book-cover-placeholder">Không có ảnh</div>`;
+            if (book.coverImage && book.coverType !== 'none') {
+                coverHtml = `<div class="book-cover" style="background-image: url('${book.coverImage}')"></div>`;
+            }
+            
+            card.innerHTML = `
+                ${coverHtml}
+                <button class="book-edit-btn" title="Chỉnh sửa truyện">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                </button>
+                <div class="book-info">
+                    <div class="book-title" title="${book.title}">${book.title}</div>
+                    <div class="book-desc" title="${book.description}">${book.description || 'Không có mô tả'}</div>
+                    <div class="book-chapter-count">${book.chapterCount || 0} chương</div>
+                </div>
+            `;
+            
+            const editBtn = card.querySelector('.book-edit-btn');
+            editBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openEditBookModal(book);
+            });
+            
+            bookGrid.appendChild(card);
+        });
+    }
+
+    async function openBook(bookId, chapterIdToResume = null, paragraphIndex = 0) {
+        currentBookId = bookId;
+        homeView.style.display = 'none';
+        playerView.style.display = 'flex';
+        
+        await fetchChapters(bookId);
+        
+        if (chapterIdToResume) {
+            loadChapter(chapterIdToResume, null, paragraphIndex);
+        } else if (allFiles.length > 0) {
+            loadChapter(allFiles[0].id);
+        }
+    }
+
+    async function fetchChapters(bookId) {
+        try {
+            fileListEl.innerHTML = '<li class="file-list-loading">Đang tải chương...</li>';
+            const res = await fetch(`/api/books/${bookId}/chapters`);
+            const data = await res.json();
+            allFiles = data.chapters || [];
+            renderChapterList(allFiles);
+        } catch {
+            fileListEl.innerHTML = '<li class="file-list-loading" style="color:#ef4444">Lỗi tải chương.</li>';
+        }
+    }
+
+    function renderChapterList(filesToRender) {
         fileListEl.innerHTML = '';
         if (!filesToRender.length) {
-            fileListEl.innerHTML = '<li class="file-list-loading">Không có kết quả nào.</li>';
+            fileListEl.innerHTML = '<li class="file-list-loading">Chưa có chương nào.</li>';
             return;
         }
         filesToRender.forEach(file => {
@@ -336,7 +609,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </svg>
                 </button>
             `;
-            li.querySelector('.item-click-area').addEventListener('click', () => loadStory(file.id, li));
+            li.querySelector('.item-click-area').addEventListener('click', () => loadChapter(file.id, li));
             li.querySelector('.delete-btn').addEventListener('click', (e) => {
                 e.stopPropagation();
                 const modal = document.getElementById('delete-modal');
@@ -347,26 +620,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 targetName.textContent = file.title;
                 modal.style.display = 'flex';
                 
-                const cleanup = () => {
-                    modal.style.display = 'none';
-                    cancelBtn.removeEventListener('click', onCancel);
-                    confirmBtn.removeEventListener('click', onConfirm);
-                };
-                
-                const onCancel = () => cleanup();
-                
-                const onConfirm = async () => {
+                const cleanup = () => { modal.style.display = 'none'; cancelBtn.onclick=null; confirmBtn.onclick=null; };
+                cancelBtn.onclick = cleanup;
+                confirmBtn.onclick = async () => {
                     cleanup();
                     try {
-                        await fetch(`/api/story/${file.id}`, { method: 'DELETE' });
-                        fetchFiles();
-                    } catch(err) {
-                        showToast('Lỗi khi xóa!');
-                    }
+                        await fetch(`/api/chapters/${file.id}`, { method: 'DELETE' });
+                        fetchChapters(currentBookId);
+                    } catch(err) { showToast('Lỗi khi xóa!'); }
                 };
-                
-                cancelBtn.addEventListener('click', onCancel);
-                confirmBtn.addEventListener('click', onConfirm);
             });
             fileListEl.appendChild(li);
         });
@@ -375,15 +637,16 @@ document.addEventListener('DOMContentLoaded', () => {
     searchInput.addEventListener('input', (e) => {
         const term = e.target.value.toLowerCase();
         const filtered = allFiles.filter(f => f.title.toLowerCase().includes(term));
-        renderFileList(filtered);
+        renderChapterList(filtered);
     });
 
-    refreshBtn.addEventListener('click', fetchFiles);
+    refreshBtn.addEventListener('click', () => {
+        if (currentBookId) fetchChapters(currentBookId);
+    });
 
-    // startIndex: optional, prefetch & render scroll starts from this paragraph (used for resume)
-    async function loadStory(storyId, li, startIndex = 0) {
-        currentStoryId = storyId;
-        renderFileList(allFiles);
+    async function loadChapter(chapterId, li = null, startIndex = 0) {
+        currentStoryId = chapterId;
+        renderChapterList(allFiles);
         
         if (sidebarEl && sidebarEl.classList.contains('open')) {
             sidebarEl.classList.remove('open');
@@ -399,22 +662,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
             </svg></div><p>Đang tải nội dung chương...</p></div>`;
         try {
-            const data = await (await fetch(`/api/story/${storyId}`)).json();
+            const data = await (await fetch(`/api/chapters/${chapterId}`)).json();
             if (data.error) throw new Error(data.error);
             story        = data.content;
-            currentIndex = startIndex; // Start prefetch from the right position
+            currentIndex = startIndex;
             headerLabelEl.textContent = 'Đang xem';
             storyTitleEl.textContent  = data.title;
-            const editBtn = document.getElementById('edit-story-btn');
             if (editBtn) editBtn.style.display = 'block';
             renderStoryContents();
             playerBar.style.display = 'flex';
             updateProgress();
             
-            // Initiate buffering from startIndex immediately
             startPrefetchLoop();
+            
+            // Try auto-resume if start index > 0
+            if (startIndex > 0) {
+                setTimeout(() => stopAndPlay(startIndex), 300);
+            }
         } catch (err) {
-            storyTitleEl.textContent = 'Lỗi tải truyện';
+            storyTitleEl.textContent = 'Lỗi tải chương';
             storyContainerEl.innerHTML = `<div class="empty-state"><p style="color:#ef4444">Không thể tải: ${err.message}</p></div>`;
             playerBar.style.display = 'none';
         }
@@ -510,21 +776,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let progressTimeout = null;
     function saveProgress(index) {
-        if (!currentStoryId || !story || story.length === 0) return;
+        if (!currentBookId || !currentStoryId || !story || story.length === 0) return;
         const currentTitle = allFiles.find(f => f.id === currentStoryId)?.title || 'Chương không tên';
+        const currentBookTitle = allBooks.find(b => b._id === currentBookId)?.title || 'Chương không tên';
+        
         clearTimeout(progressTimeout);
         progressTimeout = setTimeout(() => {
             fetch('/api/progress', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ storyId: currentStoryId, title: currentTitle, paragraphIndex: index })
+                body: JSON.stringify({ 
+                    bookId: currentBookId, 
+                    chapterId: currentStoryId, 
+                    bookTitle: currentBookTitle,
+                    chapterTitle: currentTitle 
+                })
             }).catch(() => {});
         }, 1500);
         
-        resumeCard.style.display = 'block';
-        resumeTitle.textContent = currentTitle;
-        resumePara.textContent = `Đang đọc đoạn ${index + 1}`;
-        resumePlayBtn.onclick = () => stopAndPlay(index);
+        // Removed resumeCard display code since we have globalResumeCard now on the home screen
     }
 
     async function beginPlay(index, isAutoAdvance = false) {
@@ -594,9 +864,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     showToast('Đang tải đệm 5 đoạn (Chế độ Đi Ngủ)...');
                     document.getElementById(`para-${index}`)?.classList.add('para-loading');
                     
+                    startKeepAlive(); // Keep audio session alive on iOS while waiting
+                    
                     let waitTime = 0;
                     while (waitTime < 60000) {
-                        if (!isPlaying || currentIndex !== index) return;
+                        if (!isPlaying || currentIndex !== index) {
+                            stopKeepAlive();
+                            return;
+                        }
                         
                         let bufferedCount = 0;
                         for (let i = index; i < story.length; i++) {
@@ -612,6 +887,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         waitTime += 500;
                     }
                     
+                    stopKeepAlive();
                     document.getElementById(`para-${index}`)?.classList.remove('para-loading');
                 } else {
                     showToast('Đang tải đệm âm thanh (Buffering)...');
@@ -942,14 +1218,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 const res = await fetch('/api/paste', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ title, content })
+                    body: JSON.stringify({ bookId: currentBookId, title, content })
                 });
                 const data = await res.json();
                 
                 if (res.ok) {
                     showToast(data.message || 'Đăng chương thành công!');
                     pasteModal.style.display = 'none';
-                    fetchFiles(); // Refresh list
+                    fetchChapters(currentBookId); // Refresh list
                 } else {
                     showToast(`Lỗi: ${data.error}`);
                 }
@@ -1002,7 +1278,7 @@ document.addEventListener('DOMContentLoaded', () => {
             submitEditBtn.disabled = true;
 
             try {
-                const res = await fetch(`/api/story/${currentStoryId}`, {
+                const res = await fetch(`/api/chapters/${currentStoryId}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ title, content })
@@ -1013,9 +1289,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     showToast(data.message || 'Cập nhật thành công!');
                     editModal.style.display = 'none';
                     // Re-fetch files to update sidebar title
-                    fetchFiles();
+                    fetchChapters(currentBookId);
                     // Re-load current story to show updated content
-                    loadStory(currentStoryId);
+                    loadChapter(currentStoryId);
                 } else {
                     showToast(`Lỗi: ${data.error}`);
                 }
@@ -1036,6 +1312,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!files || files.length === 0) return;
 
         const formData = new FormData();
+        formData.append('bookId', currentBookId);
         for (let i = 0; i < files.length; i++) {
             formData.append('htmlFiles', files[i]);
         }
@@ -1050,7 +1327,7 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if (res.ok) {
                 showToast(data.message || 'Tải lên thành công!');
-                fetchFiles(); // Refresh list
+                fetchChapters(currentBookId); // Refresh list
             } else {
                 showToast(`Lỗi: ${data.error}`);
             }
@@ -1060,9 +1337,198 @@ document.addEventListener('DOMContentLoaded', () => {
             uploadInput.value = ''; // Reset input
         }
     });
+    // ─── Edit & Delete Book Modal Logic ──────────────────────────────────────────
+    const editBookModal = document.getElementById('edit-book-modal');
+    const deleteBookModal = document.getElementById('delete-book-modal');
+    
+    let currentEditingBook = null;
+    let editBookCoverType = 'none';
 
+    function openEditBookModal(book) {
+        currentEditingBook = book;
+        document.getElementById('edit-book-title').value = book.title;
+        document.getElementById('edit-book-desc').value = book.description || '';
+        
+        const urlInput = document.getElementById('edit-book-cover-url');
+        const fileInput = document.getElementById('edit-book-cover-file');
+        const btnUrl = document.getElementById('edit-cover-type-url');
+        const btnFile = document.getElementById('edit-cover-type-file');
+        
+        editBookCoverType = book.coverType || 'none';
+        
+        if (editBookCoverType === 'url') {
+            urlInput.value = book.coverImage || '';
+            fileInput.value = '';
+            urlInput.style.display = 'block';
+            fileInput.style.display = 'none';
+            btnUrl.style.background = 'var(--surface-2)';
+            btnUrl.style.color = 'var(--primary)';
+            btnUrl.style.border = '1px solid var(--primary)';
+            btnFile.style.background = 'transparent';
+            btnFile.style.color = 'var(--text)';
+            btnFile.style.border = '1px solid transparent';
+        } else if (editBookCoverType === 'file') {
+            urlInput.value = '';
+            fileInput.value = ''; // cannot restore file input
+            urlInput.style.display = 'none';
+            fileInput.style.display = 'block';
+            btnFile.style.background = 'var(--surface-2)';
+            btnFile.style.color = 'var(--primary)';
+            btnFile.style.border = '1px solid var(--primary)';
+            btnUrl.style.background = 'transparent';
+            btnUrl.style.color = 'var(--text)';
+            btnUrl.style.border = '1px solid transparent';
+        } else {
+            urlInput.value = '';
+            fileInput.value = '';
+            urlInput.style.display = 'block';
+            fileInput.style.display = 'none';
+            btnUrl.style.background = 'var(--surface-2)';
+            btnUrl.style.color = 'var(--primary)';
+            btnUrl.style.border = '1px solid var(--primary)';
+            btnFile.style.background = 'transparent';
+            btnFile.style.color = 'var(--text)';
+            btnFile.style.border = '1px solid transparent';
+            editBookCoverType = 'url';
+        }
+        
+        editBookModal.style.display = 'flex';
+    }
 
+    document.getElementById('edit-cover-type-url').addEventListener('click', () => {
+        editBookCoverType = 'url';
+        document.getElementById('edit-book-cover-url').style.display = 'block';
+        document.getElementById('edit-book-cover-file').style.display = 'none';
+        document.getElementById('edit-cover-type-url').style.background = 'var(--surface-2)';
+        document.getElementById('edit-cover-type-url').style.color = 'var(--primary)';
+        document.getElementById('edit-cover-type-url').style.border = '1px solid var(--primary)';
+        document.getElementById('edit-cover-type-file').style.background = 'transparent';
+        document.getElementById('edit-cover-type-file').style.color = 'var(--text)';
+        document.getElementById('edit-cover-type-file').style.border = '1px solid transparent';
+    });
+    
+    document.getElementById('edit-cover-type-file').addEventListener('click', () => {
+        editBookCoverType = 'file';
+        document.getElementById('edit-book-cover-url').style.display = 'none';
+        document.getElementById('edit-book-cover-file').style.display = 'block';
+        document.getElementById('edit-cover-type-file').style.background = 'var(--surface-2)';
+        document.getElementById('edit-cover-type-file').style.color = 'var(--primary)';
+        document.getElementById('edit-cover-type-file').style.border = '1px solid var(--primary)';
+        document.getElementById('edit-cover-type-url').style.background = 'transparent';
+        document.getElementById('edit-cover-type-url').style.color = 'var(--text)';
+        document.getElementById('edit-cover-type-url').style.border = '1px solid transparent';
+    });
 
-    fetchFiles();
+    document.getElementById('cancel-edit-book-btn').addEventListener('click', () => {
+        editBookModal.style.display = 'none';
+        currentEditingBook = null;
+    });
+
+    document.getElementById('submit-edit-book-btn').addEventListener('click', async () => {
+        const title = document.getElementById('edit-book-title').value.trim();
+        const desc = document.getElementById('edit-book-desc').value.trim();
+        
+        if (!title) {
+            showToast('Tên truyện không được để trống!');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('title', title);
+        formData.append('description', desc);
+        formData.append('coverType', editBookCoverType);
+
+        if (editBookCoverType === 'url') {
+            const url = document.getElementById('edit-book-cover-url').value.trim();
+            if (url) formData.append('coverUrl', url);
+            else formData.set('coverType', 'none');
+        } else if (editBookCoverType === 'file') {
+            const fileInput = document.getElementById('edit-book-cover-file');
+            if (fileInput.files.length > 0) {
+                formData.append('coverFile', fileInput.files[0]);
+            } else {
+                formData.set('coverType', currentEditingBook.coverType);
+            }
+        }
+
+        const btn = document.getElementById('submit-edit-book-btn');
+        const oldText = btn.textContent;
+        btn.textContent = 'Đang lưu...';
+        btn.disabled = true;
+
+        try {
+            const res = await fetch(`/api/books/${currentEditingBook._id}`, {
+                method: 'PUT',
+                body: formData
+            });
+            
+            if (res.ok) {
+                showToast('Cập nhật truyện thành công!');
+                editBookModal.style.display = 'none';
+                fetchBooks();
+            } else {
+                const data = await res.json();
+                showToast(`Lỗi: ${data.error}`);
+            }
+        } catch (err) {
+            showToast('Lỗi kết nối máy chủ!');
+        } finally {
+            btn.textContent = oldText;
+            btn.disabled = false;
+        }
+    });
+
+    document.getElementById('delete-book-btn').addEventListener('click', () => {
+        editBookModal.style.display = 'none';
+        document.getElementById('delete-book-target-name').textContent = currentEditingBook.title;
+        document.getElementById('delete-book-confirm-input').value = '';
+        document.getElementById('confirm-delete-book-btn').disabled = true;
+        document.getElementById('confirm-delete-book-btn').style.opacity = '0.5';
+        document.getElementById('confirm-delete-book-btn').style.cursor = 'not-allowed';
+        deleteBookModal.style.display = 'flex';
+    });
+
+    document.getElementById('delete-book-confirm-input').addEventListener('input', (e) => {
+        const btn = document.getElementById('confirm-delete-book-btn');
+        if (e.target.value === currentEditingBook.title) {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.style.cursor = 'pointer';
+        } else {
+            btn.disabled = true;
+            btn.style.opacity = '0.5';
+            btn.style.cursor = 'not-allowed';
+        }
+    });
+
+    document.getElementById('cancel-delete-book-btn').addEventListener('click', () => {
+        deleteBookModal.style.display = 'none';
+        editBookModal.style.display = 'flex';
+    });
+
+    document.getElementById('confirm-delete-book-btn').addEventListener('click', async () => {
+        try {
+            const res = await fetch(`/api/books/${currentEditingBook._id}`, { method: 'DELETE' });
+            if (res.ok) {
+                showToast('Đã xóa bộ truyện thành công!');
+                deleteBookModal.style.display = 'none';
+                currentEditingBook = null;
+                fetchBooks();
+                if (currentBookId === currentEditingBook?._id) {
+                    currentBookId = null;
+                    globalResumeCard.style.display = 'none';
+                }
+            } else {
+                showToast('Có lỗi xảy ra khi xóa!');
+            }
+        } catch(err) {
+            showToast('Lỗi kết nối máy chủ!');
+        }
+    });
+
+    // Initialize
+    homeView.style.display = 'flex';
+    playerView.style.display = 'none';
+    fetchBooks();
     updatePlayButton();
 });

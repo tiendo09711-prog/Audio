@@ -50,6 +50,198 @@ body {
     gap: 0;
 }
 
+/* ─── Home View ──────────────────────────────── */
+.home-container {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    padding: 30px 40px;
+    overflow-y: auto;
+}
+
+.home-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 30px;
+}
+
+.home-header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--accent);
+}
+
+.home-header-left h1 {
+    font-family: 'Outfit', sans-serif;
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--text);
+}
+
+.global-resume-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(124, 106, 247, 0.15);
+    border: 1px solid rgba(124, 106, 247, 0.4);
+    border-radius: var(--radius-lg);
+    padding: 20px 24px;
+    margin-bottom: 32px;
+    backdrop-filter: blur(10px);
+}
+
+.resume-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.resume-label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--accent-2);
+}
+
+.resume-book-title {
+    font-size: 1.4rem;
+    font-weight: 700;
+    font-family: 'Outfit', sans-serif;
+    color: var(--text);
+}
+
+.resume-chapter-title {
+    font-size: 0.95rem;
+    color: var(--text-muted);
+}
+
+.play-btn-small {
+    background: var(--grad);
+    border: none;
+    color: white;
+    padding: 10px 20px;
+    border-radius: var(--radius-md);
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s var(--ease);
+}
+.play-btn-small:hover { transform: scale(1.05); box-shadow: 0 4px 12px var(--accent-glow); }
+
+.book-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 24px;
+}
+
+.book-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.25s var(--ease);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+
+.book-card:hover {
+    transform: translateY(-5px);
+    border-color: var(--accent-2);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+
+.book-edit-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text);
+    opacity: 0;
+    transition: all 0.2s var(--ease);
+    z-index: 10;
+}
+
+.book-card:hover .book-edit-btn {
+    opacity: 1;
+}
+
+.book-edit-btn:hover {
+    background: var(--primary);
+    color: white;
+    transform: scale(1.1);
+}
+
+.book-chapter-count {
+    font-size: 0.8rem;
+    color: var(--accent-2);
+    font-weight: 600;
+    margin-top: 4px;
+}
+
+.book-cover {
+    width: 100%;
+    aspect-ratio: 2/3;
+    background-color: var(--surface-2);
+    background-size: cover;
+    background-position: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+}
+
+.book-cover-placeholder {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, var(--surface-2), var(--surface));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--border-2);
+}
+
+.book-info {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.book-title {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 700;
+    font-size: 1.1rem;
+    color: var(--text);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.book-desc {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
 /* ─── Sidebar ──────────────────────────────── */
 .sidebar {
     width: var(--sidebar-w);
