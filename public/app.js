@@ -69,8 +69,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const modeNormalBtn = document.getElementById('mode-normal-btn');
     const modeSleepBtn = document.getElementById('mode-sleep-btn');
     
-    let voiceMode = 'auto';
-    let currentVoice = 'vip';
+    let voiceMode = localStorage.getItem('preferredVoiceMode') || 'auto';
+    let currentVoice = voiceMode === 'normal' ? 'normal' : 'vip';
     let browserSpeech = null;
     let browserVoice = null;
     
@@ -98,6 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const handleModeChange = (newMode, defaultVoice) => {
             voiceMode = newMode;
             currentVoice = defaultVoice;
+            localStorage.setItem('preferredVoiceMode', newMode);
             updateModeButtons();
             const wasPlaying = isPlaying && !isPaused;
             if (wasPlaying) {
