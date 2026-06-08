@@ -192,6 +192,7 @@ class Semaphore {
     }
 }
 const globalTTSLimit = new Semaphore(10);
+const globalChapterLimit = new Semaphore(2);
 
 // ─── Background Audio Generation ──────────────────────────────────────────
 async function generateChapterAudio(chapterId) {
