@@ -191,7 +191,7 @@ class Semaphore {
         }
     }
 }
-const globalTTSLimit = new Semaphore(30);
+const globalTTSLimit = new Semaphore(10);
 
 // ─── Background Audio Generation ──────────────────────────────────────────
 async function generateChapterAudio(chapterId) {
@@ -261,7 +261,7 @@ async function generateChapterAudio(chapterId) {
             }
         }));
         
-        tts.close();
+        try { tts.close(); } catch(e) {}
 
         // Gắn timestamps tuần tự từ mảng audioBuffers đã thu thập
         for (let i = 0; i < audioBuffers.length; i++) {
