@@ -18,6 +18,15 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET 
 });
 
+
+// ─── Bulletproof Server Crash Handlers ──────────────────────────────────────
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception thrown:', err);
+});
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
