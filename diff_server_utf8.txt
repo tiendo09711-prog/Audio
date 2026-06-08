@@ -1,0 +1,309 @@
+﻿diff --git a/server.js b/server.js
+index c6f1869..e38f0f0 100644
+--- a/server.js
++++ b/server.js
+@@ -10,6 +10,13 @@ const cheerio = require('cheerio');
+ const mongoose = require('mongoose');
+ const multer = require('multer');
+ const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
++const cloudinary = require('cloudinary').v2;
++
++cloudinary.config({ 
++    cloud_name: process.env.CLOUDINARY_CLOUD_NAME, 
++    api_key: process.env.CLOUDINARY_API_KEY, 
++    api_secret: process.env.CLOUDINARY_API_SECRET 
++});
+ 
+ const app = express();
+ const PORT = process.env.PORT || 3000;
+@@ -49,6 +56,10 @@ const ChapterSchema = new mongoose.Schema({
+     title: { type: String, required: true },
+     content: { type: [String], required: true },
+     originalFilename: String,
++    audioUrl: { type: String, default: null },
++    audioPublicId: { type: String, default: null },
++    audioTimestamps: { type: Array, default: [] }, // Array of { index, start, end }
++    audioStatus: { type: String, enum: ['pending', 'processing', 'ready', 'error'], default: 'pending' },
+     createdAt: { type: Date, default: Date.now }
+ });
+ const Chapter = mongoose.model('Chapter', ChapterSchema);
+@@ -156,60 +167,96 @@ app.post('/api/progress', async (req, res) => {
+     }
+ });
+ 
+-// ΓöÇΓöÇΓöÇ Voice Configurations (Microsoft Edge Neural) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+-const VOICE_CONFIGS = {
+-    'female-1': { voice: 'vi-VN-HoaiMyNeural',   rate: '+0%',  pitch: '+0Hz',   label: 'Nß╗» Tß╗▒ Nhi├¬n'  },
+-    'female-2': { voice: 'vi-VN-HoaiMyNeural',   rate: '-12%', pitch: '+8Hz',   label: 'Nß╗» Dß╗ïu D├áng'  },
+-    'female-3': { voice: 'vi-VN-HoaiMyNeural',   rate: '+15%', pitch: '-6Hz',   label: 'Nß╗» Linh Hoß║ít' },
+-    'male-1':   { voice: 'vi-VN-NamMinhNeural',  rate: '+0%',  pitch: '+0Hz',   label: 'Nam Trß║ºm ß║ñm'  },
+-    'male-2':   { voice: 'vi-VN-NamMinhNeural',  rate: '-10%', pitch: '-8Hz',   label: 'Nam ─Éiß╗üm T─⌐nh' },
+-    'male-3':   { voice: 'vi-VN-NamMinhNeural',  rate: '+18%', pitch: '+5Hz',   label: 'Nam R├╡ R├áng'  },
+-};
+-
+-app.get('/api/tts', async (req, res) => {
+-    const text = req.query.text;
+-    const voiceId = 'male-1'; // Force male voice
+-
+-    if (!text) return res.status(400).send('Missing text');
+-    const cfg = VOICE_CONFIGS[voiceId];
+-
+-    let tts = null;
++// ΓöÇΓöÇΓöÇ Background Audio Generation ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++async function generateChapterAudio(chapterId) {
+     try {
+-        tts = new MsEdgeTTS();
+-        await tts.setMetadata(cfg.voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+-
+-        const { audioStream } = tts.toStream(text, { rate: cfg.rate, pitch: cfg.pitch });
++        await Chapter.findByIdAndUpdate(chapterId, { audioStatus: 'processing' });
++        const chapter = await Chapter.findById(chapterId);
++        if (!chapter || !chapter.content || chapter.content.length === 0) return;
++
++        let tts = new MsEdgeTTS();
++        // Use a generic good voice for the whole app
++        await tts.setMetadata('vi-VN-HoaiMyNeural', OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
++
++        const buffers = [];
++        const timestamps = [];
++        let currentDurationSeconds = 0;
++
++        // Note: 48Kbps CBR MP3 = 48000 bits/sec = 6000 bytes/sec
++        const BYTES_PER_SECOND = 6000;
++
++        for (let i = 0; i < chapter.content.length; i++) {
++            const text = chapter.content[i].trim();
++            // Skip purely punctuation paragraphs to avoid empty audio issues
++            const isPunctuationOnly = !(/\p{L}/u.test(text)) && !(/\d/.test(text));
++            if (!text || isPunctuationOnly) {
++                // For skipped paragraphs, give them a dummy 0-length timestamp
++                timestamps.push({ index: i, start: currentDurationSeconds, end: currentDurationSeconds });
++                continue;
++            }
+ 
+-        const chunks = [];
+-        let errored = false;
++            try {
++                // Collect stream chunks
++                const { audioStream } = tts.toStream(text);
++                const chunkBuffers = [];
++                for await (const chunk of audioStream) {
++                    chunkBuffers.push(chunk);
++                }
++                const paraBuffer = Buffer.concat(chunkBuffers);
++                if (paraBuffer.length > 0) {
++                    buffers.push(paraBuffer);
++                    const paraDuration = paraBuffer.length / BYTES_PER_SECOND;
++                    timestamps.push({
++                        index: i,
++                        start: currentDurationSeconds,
++                        end: currentDurationSeconds + paraDuration
++                    });
++                    currentDurationSeconds += paraDuration;
++                } else {
++                    timestamps.push({ index: i, start: currentDurationSeconds, end: currentDurationSeconds });
++                }
++            } catch (err) {
++                console.error(`Error generating audio for paragraph ${i} of chapter ${chapterId}:`, err.message);
++                timestamps.push({ index: i, start: currentDurationSeconds, end: currentDurationSeconds });
++            }
++        }
++        
++        tts.close();
+ 
+-        audioStream.on('data', chunk => chunks.push(chunk));
++        if (buffers.length === 0) {
++            await Chapter.findByIdAndUpdate(chapterId, { audioStatus: 'error' });
++            return;
++        }
+ 
+-        audioStream.on('close', () => {
+-            if (tts) { tts.close(); tts = null; }
+-            if (errored) return;
+-            const audio = Buffer.concat(chunks);
+-            if (audio.length === 0) {
+-                return res.status(500).json({ error: 'Empty TTS response' });
+-            }
+-            res.setHeader('Content-Type', 'audio/mpeg');
+-            res.setHeader('Content-Length', audio.length);
+-            res.end(audio);
++        const fullAudioBuffer = Buffer.concat(buffers);
++
++        // Upload stream to Cloudinary
++        const uploadResponse = await new Promise((resolve, reject) => {
++            const stream = cloudinary.uploader.upload_stream({
++                resource_type: 'video', // Audio uses video resource type in Cloudinary
++                folder: 'audio-reader-chapters',
++                format: 'mp3'
++            }, (error, result) => {
++                if (error) reject(error);
++                else resolve(result);
++            });
++            stream.end(fullAudioBuffer);
+         });
+ 
+-        audioStream.on('error', err => {
+-            errored = true;
+-            if (tts) { tts.close(); tts = null; }
+-            console.error('Edge TTS stream error:', err.message);
+-            if (!res.headersSent) res.status(500).json({ error: err.message });
++        await Chapter.findByIdAndUpdate(chapterId, {
++            audioUrl: uploadResponse.secure_url,
++            audioPublicId: uploadResponse.public_id,
++            audioTimestamps: timestamps,
++            audioStatus: 'ready'
+         });
+-
++        
++        console.log(`Γ£à Generated audio for chapter ${chapterId}`);
+     } catch (err) {
+-        if (tts) { tts.close(); tts = null; }
+-        console.error('TTS error:', err.message);
+-        if (!res.headersSent) res.status(500).json({ error: err.message });
++        console.error(`Γ¥î Background Audio Gen Error for ${chapterId}:`, err.message);
++        await Chapter.findByIdAndUpdate(chapterId, { audioStatus: 'error' }).catch(()=> {});
+     }
+-});
++}
++
+ 
+ // ΓöÇΓöÇΓöÇ Book & Chapter Endpoints ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ 
+@@ -348,7 +395,15 @@ app.get('/api/chapters/:id', async (req, res) => {
+     try {
+         const chapter = await Chapter.findById(req.params.id);
+         if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
+-        res.json({ title: chapter.title, content: chapter.content, id: chapter._id, bookId: chapter.bookId });
++        res.json({ 
++            title: chapter.title, 
++            content: chapter.content, 
++            id: chapter._id, 
++            bookId: chapter.bookId,
++            audioUrl: chapter.audioUrl,
++            audioTimestamps: chapter.audioTimestamps,
++            audioStatus: chapter.audioStatus
++        });
+     } catch (error) {
+         res.status(500).json({ error: 'Invalid ID or DB error' });
+     }
+@@ -403,9 +458,12 @@ app.post('/api/upload', upload.array('htmlFiles'), async (req, res) => {
+ 
+             await newChapter.save();
+             uploadedChapters.push(newChapter._id);
++            
++            // Generate audio in background
++            generateChapterAudio(newChapter._id);
+         }
+ 
+-        res.json({ success: true, message: `Upload th├ánh c├┤ng ${req.files.length} ch╞░╞íng!`, ids: uploadedChapters });
++        res.json({ success: true, message: `Upload th├ánh c├┤ng ${req.files.length} ch╞░╞íng! Hß╗ç thß╗æng ─æang tß║ío audio ngß║ºm.`, ids: uploadedChapters });
+     } catch (error) {
+         console.error('Upload Error:', error);
+         res.status(500).json({ error: 'Lß╗ùi khi xß╗¡ l├╜ v├á l╞░u file' });
+@@ -433,16 +491,56 @@ app.post('/api/paste', async (req, res) => {
+         });
+ 
+         await newChapter.save();
+-        res.json({ success: true, message: '─É─âng ch╞░╞íng th├ánh c├┤ng!', id: newChapter._id });
++        
++        // Generate audio in background
++        generateChapterAudio(newChapter._id);
++
++        res.json({ success: true, message: '─É─âng ch╞░╞íng th├ánh c├┤ng! ─Éang tß║ío audio ngß║ºm...', id: newChapter._id });
+     } catch (error) {
+         console.error('Paste Error:', error);
+         res.status(500).json({ error: 'Lß╗ùi khi l╞░u ch╞░╞íng' });
+     }
+ });
+ 
++// X├│a nhiß╗üu file (Bulk delete)
++app.post('/api/chapters/bulk-delete', async (req, res) => {
++    try {
++        const { ids } = req.body;
++        if (!ids || !Array.isArray(ids)) return res.status(400).json({ error: 'Invalid ids' });
++
++        const chapters = await Chapter.find({ _id: { $in: ids } });
++        
++        // X├│a file tr├¬n Cloudinary ngß║ºm
++        for (const chapter of chapters) {
++            if (chapter.audioPublicId) {
++                try {
++                    await cloudinary.uploader.destroy(chapter.audioPublicId, { resource_type: 'video' });
++                } catch (cloudErr) {
++                    console.error('Failed to delete audio from Cloudinary:', cloudErr);
++                }
++            }
++        }
++        
++        await Chapter.deleteMany({ _id: { $in: ids } });
++        res.json({ success: true, deletedCount: chapters.length });
++    } catch (error) {
++        console.error('Bulk delete error:', error);
++        res.status(500).json({ error: 'Failed to bulk delete' });
++    }
++});
++
+ // X├│a file (Bonus functionality for managing DB)
+ app.delete('/api/chapters/:id', async (req, res) => {
+     try {
++        const chapter = await Chapter.findById(req.params.id);
++        if (chapter && chapter.audioPublicId) {
++            try {
++                await cloudinary.uploader.destroy(chapter.audioPublicId, { resource_type: 'video' });
++                console.log(`Deleted audio from Cloudinary: ${chapter.audioPublicId}`);
++            } catch (cloudErr) {
++                console.error('Failed to delete audio from Cloudinary:', cloudErr);
++            }
++        }
+         await Chapter.findByIdAndDelete(req.params.id);
+         res.json({ success: true });
+     } catch (error) {
+@@ -453,7 +551,7 @@ app.delete('/api/chapters/:id', async (req, res) => {
+ // Sß╗¡a file
+ app.put('/api/chapters/:id', async (req, res) => {
+     try {
+-        const { title, content } = req.body;
++        const { title, content, updateAudio } = req.body;
+         if (!title || !content) {
+             return res.status(400).json({ error: 'Missing title or content' });
+         }
+@@ -464,9 +562,27 @@ app.put('/api/chapters/:id', async (req, res) => {
+             return res.status(400).json({ error: 'Nß╗Öi dung trß╗æng' });
+         }
+ 
++        let updateData = { title: title.trim(), content: paragraphs };
++        
++        if (updateAudio) {
++            updateData.audioStatus = 'pending';
++            // Optionally delete old publicId if we're replacing it, but we can do it after fetching
++            const existingChapter = await Chapter.findById(req.params.id);
++            if (existingChapter && existingChapter.audioPublicId) {
++                try {
++                    await cloudinary.uploader.destroy(existingChapter.audioPublicId, { resource_type: 'video' });
++                } catch (e) {
++                    console.error('Cloudinary delete old audio failed:', e);
++                }
++            }
++            updateData.audioUrl = null;
++            updateData.audioPublicId = null;
++            updateData.audioTimestamps = [];
++        }
++
+         const updatedChapter = await Chapter.findByIdAndUpdate(
+             req.params.id, 
+-            { title: title.trim(), content: paragraphs }, 
++            updateData, 
+             { new: true }
+         );
+ 
+@@ -474,6 +590,10 @@ app.put('/api/chapters/:id', async (req, res) => {
+             return res.status(404).json({ error: 'Kh├┤ng t├¼m thß║Ñy ch╞░╞íng' });
+         }
+ 
++        if (updateAudio) {
++            generateChapterAudio(updatedChapter._id);
++        }
++
+         res.json({ success: true, message: 'Cß║¡p nhß║¡t th├ánh c├┤ng!' });
+     } catch (error) {
+         console.error('Update Error:', error);

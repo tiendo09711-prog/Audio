@@ -1,0 +1,307 @@
+﻿diff --git a/public/app.js b/public/app.js
+index 09c147c..e061a1a 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -1,5 +1,67 @@
+ document.addEventListener('DOMContentLoaded', () => {
+ 
++    // List Controls Logic
++    const toggleSelectModeBtn = document.getElementById('toggle-select-mode-btn');
++    const bulkActions = document.getElementById('bulk-actions');
++    const selectAllBtn = document.getElementById('select-all-btn');
++    const bulkDeleteBtn = document.getElementById('bulk-delete-btn');
++
++    if (toggleSelectModeBtn) {
++        toggleSelectModeBtn.addEventListener('click', () => {
++            window.isSelectMode = !window.isSelectMode;
++            if (!window.isSelectMode) window.selectedChapters.clear();
++            
++            toggleSelectModeBtn.textContent = window.isSelectMode ? 'Hß╗ºy' : 'Chß╗ìn nhiß╗üu';
++            bulkActions.style.display = window.isSelectMode ? 'flex' : 'none';
++            document.getElementById('selected-count').textContent = window.selectedChapters.size;
++            renderChapterList(allFiles);
++        });
++
++        selectAllBtn.addEventListener('click', () => {
++            const visibleFiles = allFiles; // or whatever is filtered
++            const allSelected = visibleFiles.every(f => window.selectedChapters.has(f.id));
++            if (allSelected) {
++                visibleFiles.forEach(f => window.selectedChapters.delete(f.id));
++            } else {
++                visibleFiles.forEach(f => window.selectedChapters.add(f.id));
++            }
++            document.getElementById('selected-count').textContent = window.selectedChapters.size;
++            renderChapterList(allFiles); // re-render to update checkboxes
++        });
++
++        bulkDeleteBtn.addEventListener('click', async () => {
++            if (window.selectedChapters.size === 0) return showToast('Ch╞░a chß╗ìn ch╞░╞íng n├áo!');
++            if (!confirm(`Bß║ín c├│ chß║»c chß║»n muß╗æn x├│a ${window.selectedChapters.size} ch╞░╞íng ─æ├ú chß╗ìn? H├ánh ─æß╗Öng n├áy kh├┤ng thß╗â ho├án t├íc.`)) return;
++
++            bulkDeleteBtn.disabled = true;
++            bulkDeleteBtn.textContent = '─Éang x├│a...';
++            
++            try {
++                const res = await fetch('/api/chapters/bulk-delete', {
++                    method: 'POST',
++                    headers: { 'Content-Type': 'application/json' },
++                    body: JSON.stringify({ ids: Array.from(window.selectedChapters) })
++                });
++                const data = await res.json();
++                if (data.success) {
++                    showToast(`─É├ú x├│a ${data.deletedCount} ch╞░╞íng th├ánh c├┤ng!`);
++                    window.selectedChapters.clear();
++                    window.isSelectMode = false;
++                    toggleSelectModeBtn.textContent = 'Chß╗ìn nhiß╗üu';
++                    bulkActions.style.display = 'none';
++                    fetchChapters(currentBookId);
++                } else {
++                    showToast('Lß╗ùi khi x├│a nhiß╗üu: ' + data.error);
++                }
++            } catch (err) {
++                showToast('Lß╗ùi hß╗ç thß╗æng khi x├│a!');
++            }
++            bulkDeleteBtn.disabled = false;
++            bulkDeleteBtn.innerHTML = 'X├│a (<span id="selected-count">0</span>)';
++        });
++    }
++
++
+     const fileListEl       = document.getElementById('file-list');
+     const refreshBtn       = document.getElementById('refresh-btn');
+     const storyTitleEl     = document.getElementById('story-title');
+@@ -128,28 +190,92 @@ document.addEventListener('DOMContentLoaded', () => {
+     const ICON_PLAY  = `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
+     const ICON_PAUSE = `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
+ 
+-
+-
+     let story           = [];
+     let currentIndex    = 0;
+     let isPlaying       = false;
+     let isPaused        = false;
+-    // Restore speed rate from localStorage, default to 1.0
+     let speedRate       = parseFloat(localStorage.getItem('preferredSpeed') || '1.0');
+     let currentStoryId  = null;
+     let allFiles        = [];
+     let allBooks        = [];
+-
+-    // Pool of 2 audio elements to avoid iOS memory limits and NotAllowed errors from creating too many
+-    const audioPool = [new Audio(), new Audio()];
+-    let poolIndex = 0;
+-    let activeAudios = new Set();
++    window.isSelectMode = false;
++    window.selectedChapters = new Set();
+     
+     // iOS Web Audio Unlock & KeepAlive
+     const SILENT_WAV = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+     let isAudioUnlocked = false;
+     let keepAliveAudio = new Audio();
+-    keepAliveAudio.loop = true;
++    
++    // List Controls Logic
++    setTimeout(() => {
++        const toggleSelectModeBtn = document.getElementById('toggle-select-mode-btn');
++        const bulkActions = document.getElementById('bulk-actions');
++        const selectAllBtn = document.getElementById('select-all-btn');
++        const bulkDeleteBtn = document.getElementById('bulk-delete-btn');
++
++        if (toggleSelectModeBtn) {
++            toggleSelectModeBtn.addEventListener('click', () => {
++                window.isSelectMode = !window.isSelectMode;
++                if (!window.isSelectMode) window.selectedChapters.clear();
++                
++                toggleSelectModeBtn.textContent = window.isSelectMode ? 'Hß╗ºy' : 'Chß╗ìn nhiß╗üu';
++                bulkActions.style.display = window.isSelectMode ? 'flex' : 'none';
++                document.getElementById('selected-count').textContent = window.selectedChapters.size;
++                if (typeof renderChapterList === 'function') {
++                    renderChapterList(allFiles);
++                }
++            });
++
++            selectAllBtn.addEventListener('click', () => {
++                const visibleFiles = allFiles;
++                const allSelected = visibleFiles.every(f => window.selectedChapters.has(f.id));
++                if (allSelected) {
++                    visibleFiles.forEach(f => window.selectedChapters.delete(f.id));
++                } else {
++                    visibleFiles.forEach(f => window.selectedChapters.add(f.id));
++                }
++                document.getElementById('selected-count').textContent = window.selectedChapters.size;
++                if (typeof renderChapterList === 'function') renderChapterList(allFiles);
++            });
++
++            bulkDeleteBtn.addEventListener('click', async () => {
++                if (window.selectedChapters.size === 0) {
++                    if (typeof showToast === 'function') showToast('Ch╞░a chß╗ìn ch╞░╞íng n├áo!');
++                    return;
++                }
++                if (!confirm(`Bß║ín c├│ chß║»c chß║»n muß╗æn x├│a ${window.selectedChapters.size} ch╞░╞íng ─æ├ú chß╗ìn? H├ánh ─æß╗Öng n├áy kh├┤ng thß╗â ho├án t├íc.`)) return;
++
++                bulkDeleteBtn.disabled = true;
++                bulkDeleteBtn.textContent = '─Éang x├│a...';
++                
++                try {
++                    const res = await fetch('/api/chapters/bulk-delete', {
++                        method: 'POST',
++                        headers: { 'Content-Type': 'application/json' },
++                        body: JSON.stringify({ ids: Array.from(window.selectedChapters) })
++                    });
++                    const data = await res.json();
++                    if (data.success) {
++                        if (typeof showToast === 'function') showToast(`─É├ú x├│a ${data.deletedCount} ch╞░╞íng th├ánh c├┤ng!`);
++                        window.selectedChapters.clear();
++                        window.isSelectMode = false;
++                        toggleSelectModeBtn.textContent = 'Chß╗ìn nhiß╗üu';
++                        bulkActions.style.display = 'none';
++                        if (typeof fetchChapters === 'function' && currentBookId) {
++                            fetchChapters(currentBookId);
++                        }
++                    } else {
++                        if (typeof showToast === 'function') showToast('Lß╗ùi khi x├│a nhiß╗üu: ' + data.error);
++                    }
++                } catch (err) {
++                    if (typeof showToast === 'function') showToast('Lß╗ùi hß╗ç thß╗æng khi x├│a!');
++                }
++                bulkDeleteBtn.disabled = false;
++                bulkDeleteBtn.innerHTML = 'X├│a (<span id="selected-count">0</span>)';
++            });
++        }
++    }, 100);
++
+     keepAliveAudio.src = SILENT_WAV;
+ 
+     function unlockAudio() {
+@@ -307,7 +433,7 @@ document.addEventListener('DOMContentLoaded', () => {
+         const now = Date.now();
+         if (now - playSessionStart >= IDLE_TIMEOUT_MS) {
+             isWaitingForIdleCheck = true;
+-            activeAudios.forEach(a => a.pause());
++            mainAudio.pause();
+             isPlaying = false; isPaused = true; updatePlayButton(); // Manually pause
+             idleCheckModal.style.display = 'flex';
+         }
+@@ -606,6 +732,7 @@ document.addEventListener('DOMContentLoaded', () => {
+             li.className = 'file-item';
+             if (file.id === currentStoryId) li.classList.add('active');
+             li.innerHTML = `
++                <input type="checkbox" class="chapter-checkbox" value="${file.id}" style="display: ${window.isSelectMode ? 'block' : 'none'}; margin-right: 8px;">
+                 <div style="display:flex; align-items:center; flex:1; gap:10px; overflow:hidden;" class="item-click-area">
+                     <div class="file-item-icon">
+                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+@@ -615,13 +742,31 @@ document.addEventListener('DOMContentLoaded', () => {
+                     </div>
+                     <span class="file-item-name" title="${file.title}">${file.title}</span>
+                 </div>
+-                <button class="delete-btn" title="X├│a" style="background:transparent; border:none; color:#ef4444; cursor:pointer; padding:6px; opacity:0.6;">
++                <button class="delete-btn" title="X├│a" style="display: ${window.isSelectMode ? 'none' : 'block'}; background:transparent; border:none; color:#ef4444; cursor:pointer; padding:6px; opacity:0.6;">
+                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                         <polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                     </svg>
+                 </button>
+             `;
+-            li.querySelector('.item-click-area').addEventListener('click', () => loadChapter(file.id, li));
++            
++            const checkbox = li.querySelector('.chapter-checkbox');
++            if (checkbox) {
++                checkbox.checked = window.selectedChapters.has(file.id);
++                checkbox.addEventListener('change', (e) => {
++                    if (e.target.checked) window.selectedChapters.add(file.id);
++                    else window.selectedChapters.delete(file.id);
++                    document.getElementById('selected-count').textContent = window.selectedChapters.size;
++                });
++            }
++            li.querySelector('.item-click-area').addEventListener('click', () => {
++                if (window.isSelectMode) {
++                    checkbox.checked = !checkbox.checked;
++                    checkbox.dispatchEvent(new Event('change'));
++                } else {
++                    loadChapter(file.id, li);
++                }
++            });
++
+             li.querySelector('.delete-btn').addEventListener('click', (e) => {
+                 e.stopPropagation();
+                 const modal = document.getElementById('delete-modal');
+@@ -659,24 +804,20 @@ document.addEventListener('DOMContentLoaded', () => {
+     async function loadChapter(chapterId, li = null, startIndex = 0) {
+         currentStoryId = chapterId;
+         renderChapterList(allFiles);
+-        
+         if (sidebarEl && sidebarEl.classList.contains('open')) {
+             sidebarEl.classList.remove('open');
+             sidebarOverlay.style.display = 'none';
+         }
+-
+         const editBtn = document.getElementById('edit-story-btn');
+         if (editBtn) editBtn.style.display = 'none';
+ 
+         stopPlayback();
+-        storyContainerEl.innerHTML = `<div class="empty-state"><div class="empty-icon">
+-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+-                <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+-            </svg></div><p>─Éang tß║úi nß╗Öi dung ch╞░╞íng...</p></div>`;
++        storyContainerEl.innerHTML = '<div class="empty-state"><p>─Éang tß║úi nß╗Öi dung ch╞░╞íng...</p></div>';
++        
+         try {
+             const data = await (await fetch(`/api/chapters/${chapterId}`)).json();
+             if (data.error) throw new Error(data.error);
+-            story        = data.content;
++            story = data.content;
+             currentIndex = startIndex;
+             headerLabelEl.textContent = '─Éang xem';
+             storyTitleEl.textContent  = data.title;
+@@ -684,12 +825,38 @@ document.addEventListener('DOMContentLoaded', () => {
+             renderStoryContents();
+             playerBar.style.display = 'flex';
+             updateProgress();
+-            
+-            startPrefetchLoop();
+-            
+-            // Try auto-resume if start index > 0
+-            if (startIndex > 0) {
+-                setTimeout(() => stopAndPlay(startIndex), 300);
++
++            mainAudio.ontimeupdate = null;
++            mainAudio.onended = null;
++
++            if (data.audioStatus === 'ready' && data.audioUrl) {
++                mainAudio.src = data.audioUrl;
++                mainAudio.playbackRate = speedRate;
++                window.currentTimestamps = data.audioTimestamps || [];
++
++                mainAudio.ontimeupdate = () => {
++                    const ct = mainAudio.currentTime;
++                    const ts = window.currentTimestamps.find(t => ct >= t.start && ct < t.end);
++                    if (ts && currentIndex !== ts.index) {
++                        currentIndex = ts.index;
++                        highlightParagraph(ts.index);
++                        updateProgress();
++                        saveProgress(ts.index);
++                    }
++                };
++
++                mainAudio.onended = () => {
++                    isPlaying = false;
++                    updatePlayButton();
++                    playNextChapter();
++                };
++
++                if (startIndex > 0) {
++                    const startTs = window.currentTimestamps.find(t => t.index === startIndex);
++                    if (startTs) mainAudio.currentTime = startTs.start;
++                }
++            } else if (data.audioStatus === 'processing' || data.audioStatus === 'pending') {
++                showToast('Audio ─æang ─æ╞░ß╗úc tß║ío, vui l├▓ng chß╗¥ ├¡t ph├║t...');
+             }
+         } catch (err) {
+             storyTitleEl.textContent = 'Lß╗ùi tß║úi ch╞░╞íng';
+@@ -1062,7 +1229,7 @@ document.addEventListener('DOMContentLoaded', () => {
+             }
+         } else {
+             if (currentVoice === 'normal' && window.speechSynthesis) window.speechSynthesis.pause();
+-            else activeAudios.forEach(a => a.pause());
++            else mainAudio.pause();
+             isPlaying = false; isPaused = true; updatePlayButton();
+         }
+     }

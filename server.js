@@ -10,6 +10,13 @@ const cheerio = require('cheerio');
 const mongoose = require('mongoose');
 const multer = require('multer');
 const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
+const cloudinary = require('cloudinary').v2;
+
+cloudinary.config({ 
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME, 
+    api_key: process.env.CLOUDINARY_API_KEY, 
+    api_secret: process.env.CLOUDINARY_API_SECRET 
+});
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -49,6 +56,11 @@ const ChapterSchema = new mongoose.Schema({
     title: { type: String, required: true },
     content: { type: [String], required: true },
     originalFilename: String,
+    audioUrl: { type: String, default: null },
+    audioPublicId: { type: String, default: null },
+    audioTimestamps: { type: Array, default: [] }, // Array of { index, start, end }
+    audioStatus: { type: String, enum: ['pending', 'processing', 'ready', 'error'], default: 'pending' },
+    audioProgress: { type: Number, default: 0 },
     createdAt: { type: Date, default: Date.now }
 });
 const Chapter = mongoose.model('Chapter', ChapterSchema);
@@ -156,62 +168,165 @@ app.post('/api/progress', async (req, res) => {
     }
 });
 
-// ─── Voice Configurations (Microsoft Edge Neural) ───────────────────────────
-const VOICE_CONFIGS = {
-    'female-1': { voice: 'vi-VN-HoaiMyNeural',   rate: '+0%',  pitch: '+0Hz',   label: 'Nữ Tự Nhiên'  },
-    'female-2': { voice: 'vi-VN-HoaiMyNeural',   rate: '-12%', pitch: '+8Hz',   label: 'Nữ Dịu Dàng'  },
-    'female-3': { voice: 'vi-VN-HoaiMyNeural',   rate: '+15%', pitch: '-6Hz',   label: 'Nữ Linh Hoạt' },
-    'male-1':   { voice: 'vi-VN-NamMinhNeural',  rate: '+0%',  pitch: '+0Hz',   label: 'Nam Trầm Ấm'  },
-    'male-2':   { voice: 'vi-VN-NamMinhNeural',  rate: '-10%', pitch: '-8Hz',   label: 'Nam Điềm Tĩnh' },
-    'male-3':   { voice: 'vi-VN-NamMinhNeural',  rate: '+18%', pitch: '+5Hz',   label: 'Nam Rõ Ràng'  },
-};
-
-app.get('/api/tts', async (req, res) => {
-    const text = req.query.text;
-    const voiceId = 'male-1'; // Force male voice
-
-    if (!text) return res.status(400).send('Missing text');
-    const cfg = VOICE_CONFIGS[voiceId];
-
-    let tts = null;
-    try {
-        tts = new MsEdgeTTS();
-        await tts.setMetadata(cfg.voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-
-        const { audioStream } = tts.toStream(text, { rate: cfg.rate, pitch: cfg.pitch });
-
-        const chunks = [];
-        let errored = false;
-
-        audioStream.on('data', chunk => chunks.push(chunk));
-
-        audioStream.on('close', () => {
-            if (tts) { tts.close(); tts = null; }
-            if (errored) return;
-            const audio = Buffer.concat(chunks);
-            if (audio.length === 0) {
-                return res.status(500).json({ error: 'Empty TTS response' });
-            }
-            res.setHeader('Content-Type', 'audio/mpeg');
-            res.setHeader('Content-Length', audio.length);
-            res.end(audio);
-        });
-
-        audioStream.on('error', err => {
-            errored = true;
-            if (tts) { tts.close(); tts = null; }
-            console.error('Edge TTS stream error:', err.message);
-            if (!res.headersSent) res.status(500).json({ error: err.message });
-        });
-
-    } catch (err) {
-        if (tts) { tts.close(); tts = null; }
-        console.error('TTS error:', err.message);
-        if (!res.headersSent) res.status(500).json({ error: err.message });
+// ─── Global Concurrency Limiter ──────────────────────────────────────────
+class Semaphore {
+    constructor(max) {
+        this.max = max;
+        this.count = 0;
+        this.waiting = [];
     }
-});
+    async acquire() {
+        if (this.count < this.max) {
+            this.count++;
+            return;
+        }
+        return new Promise(resolve => this.waiting.push(resolve));
+    }
+    release() {
+        if (this.waiting.length > 0) {
+            const resolve = this.waiting.shift();
+            resolve();
+        } else {
+            this.count--;
+        }
+    }
+}
+const globalTTSLimit = new Semaphore(30);
+
+// ─── Background Audio Generation ──────────────────────────────────────────
+async function generateChapterAudio(chapterId) {
+    try {
+        await Chapter.findByIdAndUpdate(chapterId, { audioStatus: 'processing', audioProgress: 0 });
+        const chapter = await Chapter.findById(chapterId);
+        if (!chapter || !chapter.content || chapter.content.length === 0) return;
+
+        let tts = new MsEdgeTTS();
+        // Use the warm deep male voice (vi-VN-NamMinhNeural)
+        await tts.setMetadata('vi-VN-NamMinhNeural', OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+
+        const buffers = [];
+        const timestamps = [];
+        let currentDurationSeconds = 0;
+
+        // Note: 48Kbps CBR MP3 = 48000 bits/sec = 6000 bytes/sec
+        const BYTES_PER_SECOND = 6000;
+        
+        const audioBuffers = new Array(chapter.content.length).fill(null);
+        let processedCount = 0;
+
+        await Promise.all(chapter.content.map(async (rawText, idx) => {
+            const text = rawText.trim();
+            const isPunctuationOnly = !(/\p{L}/u.test(text)) && !(/\d/.test(text));
+            
+            if (!text || isPunctuationOnly) {
+                audioBuffers[idx] = Buffer.alloc(0);
+                processedCount++;
+                return;
+            }
+
+            await globalTTSLimit.acquire();
+            try {
+                const chunkBuffers = await Promise.race([
+                    new Promise(async (resolve, reject) => {
+                        try {
+                            const { audioStream } = tts.toStream(text);
+                            const chunks = [];
+                            for await (const chunk of audioStream) {
+                                chunks.push(chunk);
+                            }
+                            resolve(chunks);
+                        } catch (e) {
+                            reject(e);
+                        }
+                    }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('TTS_TIMEOUT')), 15000))
+                ]);
+
+                audioBuffers[idx] = Buffer.concat(chunkBuffers);
+            } catch (err) {
+                console.error(`Error on paragraph ${idx}:`, err.message);
+                audioBuffers[idx] = Buffer.alloc(0);
+                // Removed unsafe tts.close() here
+            } finally {
+                globalTTSLimit.release();
+            }
+            
+            processedCount++;
+            
+            // Cập nhật tiến độ mỗi 5 đoạn hoặc khi xong hẳn để tránh spam DB
+            if (processedCount % 5 === 0 || processedCount === chapter.content.length) {
+                let currentProgress = Math.floor((processedCount / chapter.content.length) * 100);
+                if (currentProgress > 99 && processedCount < chapter.content.length) currentProgress = 99;
+                await Chapter.findByIdAndUpdate(chapterId, { audioProgress: currentProgress }).catch(()=> {});
+            }
+        }));
+        
+        tts.close();
+
+        // Gắn timestamps tuần tự từ mảng audioBuffers đã thu thập
+        for (let i = 0; i < audioBuffers.length; i++) {
+            const buf = audioBuffers[i];
+            if (buf && buf.length > 0) {
+                buffers.push(buf);
+                const paraDuration = buf.length / BYTES_PER_SECOND;
+                timestamps.push({ index: i, start: currentDurationSeconds, end: currentDurationSeconds + paraDuration });
+                currentDurationSeconds += paraDuration;
+            } else {
+                timestamps.push({ index: i, start: currentDurationSeconds, end: currentDurationSeconds });
+            }
+        }
+
+        if (buffers.length === 0) {
+            await Chapter.findByIdAndUpdate(chapterId, { audioStatus: 'error' });
+            return;
+        }
+
+        const fullAudioBuffer = Buffer.concat(buffers);
+
+        // Upload stream to Cloudinary
+        const uploadResponse = await new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream({
+                resource_type: 'video', // Audio uses video resource type in Cloudinary
+                folder: 'audio-reader-chapters',
+                format: 'mp3'
+            }, (error, result) => {
+                if (error) reject(error);
+                else resolve(result);
+            });
+            stream.end(fullAudioBuffer);
+        });
+
+        await Chapter.findByIdAndUpdate(chapterId, {
+            audioUrl: uploadResponse.secure_url,
+            audioPublicId: uploadResponse.public_id,
+            audioTimestamps: timestamps,
+            audioStatus: 'ready',
+            audioProgress: 100
+        });
+        
+        console.log(`✅ Generated audio for chapter ${chapterId}`);
+    } catch (err) {
+        console.error(`❌ Background Audio Gen Error for ${chapterId}:`, err.message);
+        await Chapter.findByIdAndUpdate(chapterId, { audioStatus: 'error' }).catch(()=> {});
+    }
+}
+
 
 // ─── Book & Chapter Endpoints ────────────────────────────────────────────────
+
+app.get('/api/tasks/progress', async (req, res) => {
+    try {
+        const tasks = await Chapter.find(
+            { audioStatus: { $in: ['pending', 'processing'] } },
+            'title audioStatus audioProgress'
+        ).sort({ createdAt: 1 });
+        
+        res.json({ tasks });
+    } catch (error) {
+        console.error('Fetch tasks progress error:', error);
+        res.status(500).json({ error: 'Failed to fetch tasks progress' });
+    }
+});
 
 app.get('/api/books', async (req, res) => {
     try {
@@ -348,7 +463,15 @@ app.get('/api/chapters/:id', async (req, res) => {
     try {
         const chapter = await Chapter.findById(req.params.id);
         if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
-        res.json({ title: chapter.title, content: chapter.content, id: chapter._id, bookId: chapter.bookId });
+        res.json({ 
+            title: chapter.title, 
+            content: chapter.content, 
+            id: chapter._id, 
+            bookId: chapter.bookId,
+            audioUrl: chapter.audioUrl,
+            audioTimestamps: chapter.audioTimestamps,
+            audioStatus: chapter.audioStatus
+        });
     } catch (error) {
         res.status(500).json({ error: 'Invalid ID or DB error' });
     }
@@ -403,9 +526,12 @@ app.post('/api/upload', upload.array('htmlFiles'), async (req, res) => {
 
             await newChapter.save();
             uploadedChapters.push(newChapter._id);
+            
+            // Generate audio in background
+            generateChapterAudio(newChapter._id);
         }
 
-        res.json({ success: true, message: `Upload thành công ${req.files.length} chương!`, ids: uploadedChapters });
+        res.json({ success: true, message: `Upload thành công ${req.files.length} chương! Hệ thống đang tạo audio ngầm.`, ids: uploadedChapters });
     } catch (error) {
         console.error('Upload Error:', error);
         res.status(500).json({ error: 'Lỗi khi xử lý và lưu file' });
@@ -433,16 +559,56 @@ app.post('/api/paste', async (req, res) => {
         });
 
         await newChapter.save();
-        res.json({ success: true, message: 'Đăng chương thành công!', id: newChapter._id });
+        
+        // Generate audio in background
+        generateChapterAudio(newChapter._id);
+
+        res.json({ success: true, message: 'Đăng chương thành công! Đang tạo audio ngầm...', id: newChapter._id });
     } catch (error) {
         console.error('Paste Error:', error);
         res.status(500).json({ error: 'Lỗi khi lưu chương' });
     }
 });
 
+// Xóa nhiều file (Bulk delete)
+app.post('/api/chapters/bulk-delete', async (req, res) => {
+    try {
+        const { ids } = req.body;
+        if (!ids || !Array.isArray(ids)) return res.status(400).json({ error: 'Invalid ids' });
+
+        const chapters = await Chapter.find({ _id: { $in: ids } });
+        
+        // Xóa file trên Cloudinary ngầm
+        for (const chapter of chapters) {
+            if (chapter.audioPublicId) {
+                try {
+                    await cloudinary.uploader.destroy(chapter.audioPublicId, { resource_type: 'video' });
+                } catch (cloudErr) {
+                    console.error('Failed to delete audio from Cloudinary:', cloudErr);
+                }
+            }
+        }
+        
+        await Chapter.deleteMany({ _id: { $in: ids } });
+        res.json({ success: true, deletedCount: chapters.length });
+    } catch (error) {
+        console.error('Bulk delete error:', error);
+        res.status(500).json({ error: 'Failed to bulk delete' });
+    }
+});
+
 // Xóa file (Bonus functionality for managing DB)
 app.delete('/api/chapters/:id', async (req, res) => {
     try {
+        const chapter = await Chapter.findById(req.params.id);
+        if (chapter && chapter.audioPublicId) {
+            try {
+                await cloudinary.uploader.destroy(chapter.audioPublicId, { resource_type: 'video' });
+                console.log(`Deleted audio from Cloudinary: ${chapter.audioPublicId}`);
+            } catch (cloudErr) {
+                console.error('Failed to delete audio from Cloudinary:', cloudErr);
+            }
+        }
         await Chapter.findByIdAndDelete(req.params.id);
         res.json({ success: true });
     } catch (error) {
@@ -453,7 +619,7 @@ app.delete('/api/chapters/:id', async (req, res) => {
 // Sửa file
 app.put('/api/chapters/:id', async (req, res) => {
     try {
-        const { title, content } = req.body;
+        const { title, content, updateAudio } = req.body;
         if (!title || !content) {
             return res.status(400).json({ error: 'Missing title or content' });
         }
@@ -464,14 +630,36 @@ app.put('/api/chapters/:id', async (req, res) => {
             return res.status(400).json({ error: 'Nội dung trống' });
         }
 
+        let updateData = { title: title.trim(), content: paragraphs };
+        
+        if (updateAudio) {
+            updateData.audioStatus = 'pending';
+            // Optionally delete old publicId if we're replacing it, but we can do it after fetching
+            const existingChapter = await Chapter.findById(req.params.id);
+            if (existingChapter && existingChapter.audioPublicId) {
+                try {
+                    await cloudinary.uploader.destroy(existingChapter.audioPublicId, { resource_type: 'video' });
+                } catch (e) {
+                    console.error('Cloudinary delete old audio failed:', e);
+                }
+            }
+            updateData.audioUrl = null;
+            updateData.audioPublicId = null;
+            updateData.audioTimestamps = [];
+        }
+
         const updatedChapter = await Chapter.findByIdAndUpdate(
             req.params.id, 
-            { title: title.trim(), content: paragraphs }, 
+            updateData, 
             { new: true }
         );
 
         if (!updatedChapter) {
             return res.status(404).json({ error: 'Không tìm thấy chương' });
+        }
+
+        if (updateAudio) {
+            generateChapterAudio(updatedChapter._id);
         }
 
         res.json({ success: true, message: 'Cập nhật thành công!' });

@@ -1,0 +1,509 @@
+﻿diff --git a/public/app.js b/public/app.js
+index 09c147c..49026f5 100644
+--- a/public/app.js
++++ b/public/app.js
+@@ -1,5 +1,67 @@
+ document.addEventListener('DOMContentLoaded', () => {
+ 
++    // List Controls Logic
++    const toggleSelectModeBtn = document.getElementById('toggle-select-mode-btn');
++    const bulkActions = document.getElementById('bulk-actions');
++    const selectAllBtn = document.getElementById('select-all-btn');
++    const bulkDeleteBtn = document.getElementById('bulk-delete-btn');
++
++    if (toggleSelectModeBtn) {
++        toggleSelectModeBtn.addEventListener('click', () => {
++            window.isSelectMode = !window.isSelectMode;
++            if (!window.isSelectMode) window.selectedChapters.clear();
++            
++            toggleSelectModeBtn.textContent = window.isSelectMode ? 'Hß╗ºy' : 'Chß╗ìn nhiß╗üu';
++            bulkActions.style.display = window.isSelectMode ? 'flex' : 'none';
++            document.getElementById('selected-count').textContent = window.selectedChapters.size;
++            renderChapterList(allFiles);
++        });
++
++        selectAllBtn.addEventListener('click', () => {
++            const visibleFiles = allFiles; // or whatever is filtered
++            const allSelected = visibleFiles.every(f => window.selectedChapters.has(f.id));
++            if (allSelected) {
++                visibleFiles.forEach(f => window.selectedChapters.delete(f.id));
++            } else {
++                visibleFiles.forEach(f => window.selectedChapters.add(f.id));
++            }
++            document.getElementById('selected-count').textContent = window.selectedChapters.size;
++            renderChapterList(allFiles); // re-render to update checkboxes
++        });
++
++        bulkDeleteBtn.addEventListener('click', async () => {
++            if (window.selectedChapters.size === 0) return showToast('Ch╞░a chß╗ìn ch╞░╞íng n├áo!');
++            if (!confirm(`Bß║ín c├│ chß║»c chß║»n muß╗æn x├│a ${window.selectedChapters.size} ch╞░╞íng ─æ├ú chß╗ìn? H├ánh ─æß╗Öng n├áy kh├┤ng thß╗â ho├án t├íc.`)) return;
++
++            bulkDeleteBtn.disabled = true;
++            bulkDeleteBtn.textContent = '─Éang x├│a...';
++            
++            try {
++                const res = await fetch('/api/chapters/bulk-delete', {
++                    method: 'POST',
++                    headers: { 'Content-Type': 'application/json' },
++                    body: JSON.stringify({ ids: Array.from(window.selectedChapters) })
++                });
++                const data = await res.json();
++                if (data.success) {
++                    showToast(`─É├ú x├│a ${data.deletedCount} ch╞░╞íng th├ánh c├┤ng!`);
++                    window.selectedChapters.clear();
++                    window.isSelectMode = false;
++                    toggleSelectModeBtn.textContent = 'Chß╗ìn nhiß╗üu';
++                    bulkActions.style.display = 'none';
++                    fetchChapters(currentBookId);
++                } else {
++                    showToast('Lß╗ùi khi x├│a nhiß╗üu: ' + data.error);
++                }
++            } catch (err) {
++                showToast('Lß╗ùi hß╗ç thß╗æng khi x├│a!');
++            }
++            bulkDeleteBtn.disabled = false;
++            bulkDeleteBtn.innerHTML = 'X├│a (<span id="selected-count">0</span>)';
++        });
++    }
++
++
+     const fileListEl       = document.getElementById('file-list');
+     const refreshBtn       = document.getElementById('refresh-btn');
+     const storyTitleEl     = document.getElementById('story-title');
+@@ -128,28 +190,92 @@ document.addEventListener('DOMContentLoaded', () => {
+     const ICON_PLAY  = `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
+     const ICON_PAUSE = `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
+ 
+-
+-
+     let story           = [];
+     let currentIndex    = 0;
+     let isPlaying       = false;
+     let isPaused        = false;
+-    // Restore speed rate from localStorage, default to 1.0
+     let speedRate       = parseFloat(localStorage.getItem('preferredSpeed') || '1.0');
+     let currentStoryId  = null;
+     let allFiles        = [];
+     let allBooks        = [];
+-
+-    // Pool of 2 audio elements to avoid iOS memory limits and NotAllowed errors from creating too many
+-    const audioPool = [new Audio(), new Audio()];
+-    let poolIndex = 0;
+-    let activeAudios = new Set();
++    window.isSelectMode = false;
++    window.selectedChapters = new Set();
+     
+     // iOS Web Audio Unlock & KeepAlive
+     const SILENT_WAV = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+     let isAudioUnlocked = false;
+     let keepAliveAudio = new Audio();
+-    keepAliveAudio.loop = true;
++    
++    // List Controls Logic
++    setTimeout(() => {
++        const toggleSelectModeBtn = document.getElementById('toggle-select-mode-btn');
++        const bulkActions = document.getElementById('bulk-actions');
++        const selectAllBtn = document.getElementById('select-all-btn');
++        const bulkDeleteBtn = document.getElementById('bulk-delete-btn');
++
++        if (toggleSelectModeBtn) {
++            toggleSelectModeBtn.addEventListener('click', () => {
++                window.isSelectMode = !window.isSelectMode;
++                if (!window.isSelectMode) window.selectedChapters.clear();
++                
++                toggleSelectModeBtn.textContent = window.isSelectMode ? 'Hß╗ºy' : 'Chß╗ìn nhiß╗üu';
++                bulkActions.style.display = window.isSelectMode ? 'flex' : 'none';
++                document.getElementById('selected-count').textContent = window.selectedChapters.size;
++                if (typeof renderChapterList === 'function') {
++                    renderChapterList(allFiles);
++                }
++            });
++
++            selectAllBtn.addEventListener('click', () => {
++                const visibleFiles = allFiles;
++                const allSelected = visibleFiles.every(f => window.selectedChapters.has(f.id));
++                if (allSelected) {
++                    visibleFiles.forEach(f => window.selectedChapters.delete(f.id));
++                } else {
++                    visibleFiles.forEach(f => window.selectedChapters.add(f.id));
++                }
++                document.getElementById('selected-count').textContent = window.selectedChapters.size;
++                if (typeof renderChapterList === 'function') renderChapterList(allFiles);
++            });
++
++            bulkDeleteBtn.addEventListener('click', async () => {
++                if (window.selectedChapters.size === 0) {
++                    if (typeof showToast === 'function') showToast('Ch╞░a chß╗ìn ch╞░╞íng n├áo!');
++                    return;
++                }
++                if (!confirm(`Bß║ín c├│ chß║»c chß║»n muß╗æn x├│a ${window.selectedChapters.size} ch╞░╞íng ─æ├ú chß╗ìn? H├ánh ─æß╗Öng n├áy kh├┤ng thß╗â ho├án t├íc.`)) return;
++
++                bulkDeleteBtn.disabled = true;
++                bulkDeleteBtn.textContent = '─Éang x├│a...';
++                
++                try {
++                    const res = await fetch('/api/chapters/bulk-delete', {
++                        method: 'POST',
++                        headers: { 'Content-Type': 'application/json' },
++                        body: JSON.stringify({ ids: Array.from(window.selectedChapters) })
++                    });
++                    const data = await res.json();
++                    if (data.success) {
++                        if (typeof showToast === 'function') showToast(`─É├ú x├│a ${data.deletedCount} ch╞░╞íng th├ánh c├┤ng!`);
++                        window.selectedChapters.clear();
++                        window.isSelectMode = false;
++                        toggleSelectModeBtn.textContent = 'Chß╗ìn nhiß╗üu';
++                        bulkActions.style.display = 'none';
++                        if (typeof fetchChapters === 'function' && currentBookId) {
++                            fetchChapters(currentBookId);
++                        }
++                    } else {
++                        if (typeof showToast === 'function') showToast('Lß╗ùi khi x├│a nhiß╗üu: ' + data.error);
++                    }
++                } catch (err) {
++                    if (typeof showToast === 'function') showToast('Lß╗ùi hß╗ç thß╗æng khi x├│a!');
++                }
++                bulkDeleteBtn.disabled = false;
++                bulkDeleteBtn.innerHTML = 'X├│a (<span id="selected-count">0</span>)';
++            });
++        }
++    }, 100);
++
+     keepAliveAudio.src = SILENT_WAV;
+ 
+     function unlockAudio() {
+@@ -307,7 +433,7 @@ document.addEventListener('DOMContentLoaded', () => {
+         const now = Date.now();
+         if (now - playSessionStart >= IDLE_TIMEOUT_MS) {
+             isWaitingForIdleCheck = true;
+-            activeAudios.forEach(a => a.pause());
++            mainAudio.pause();
+             isPlaying = false; isPaused = true; updatePlayButton(); // Manually pause
+             idleCheckModal.style.display = 'flex';
+         }
+@@ -583,6 +709,201 @@ document.addEventListener('DOMContentLoaded', () => {
+         }
+     }
+ 
++    async function fetchChapters(bookId) {
++        try {
++            fileListEl.innerHTML = '<li class="file-list-loading">─Éang tß║úi ch╞░╞íng...</li>';
++            } else {
++                if (bookCoverFileInput.files.length > 0) {
++                    formData.append('coverFile', bookCoverFileInput.files[0]);
++                }
++            }
++
++            const oldText = submitAddBookBtn.textContent;
++            submitAddBookBtn.textContent = '─Éang tß║ío...';
++            submitAddBookBtn.disabled = true;
++
++            try {
++                const res = await fetch('/api/books', { method: 'POST', body: formData });
++                const data = await res.json();
++                if (res.ok) {
++                    showToast('Tß║ío truyß╗çn th├ánh c├┤ng!');
++                    addBookModal.style.display = 'none';
++                    document.getElementById('book-title').value = '';
++                    document.getElementById('book-desc').value = '';
++                    fetchBooks();
++                } else {
++                    showToast(`Lß╗ùi: ${data.error}`);
++                }
++            } catch (err) {
++                showToast('Lß╗ùi khi tß║ío truyß╗çn');
++            } finally {
++                submitAddBookBtn.textContent = oldText;
++                submitAddBookBtn.disabled = false;
++            }
++        });
++    }
++
++    if (backToHomeBtn) {
++        backToHomeBtn.addEventListener('click', () => {
++            playerView.style.display = 'none';
++            homeView.style.display = 'flex';
++            currentBookId = null;
++            stopPlayback();
++            fetchBooks();
++        });
++    }
++
++    const tabAllBooks = document.getElementById('tab-all-books');
++    const tabHistory = document.getElementById('tab-history');
++    const historyGrid = document.getElementById('history-grid');
++
++    if (tabAllBooks && tabHistory) {
++        tabAllBooks.addEventListener('click', () => {
++            tabAllBooks.style.opacity = '1';
++            tabAllBooks.style.borderBottom = '2px solid var(--primary)';
++            tabHistory.style.opacity = '0.6';
++            tabHistory.style.borderBottom = '2px solid transparent';
++            bookGrid.style.display = 'grid';
++            historyGrid.style.display = 'none';
++            globalResumeCard.style.display = 'flex'; // show global resume if any
++        });
++
++        tabHistory.addEventListener('click', () => {
++            tabHistory.style.opacity = '1';
++            tabHistory.style.borderBottom = '2px solid var(--primary)';
++            tabAllBooks.style.opacity = '0.6';
++            tabAllBooks.style.borderBottom = '2px solid transparent';
++            historyGrid.style.display = 'grid';
++            bookGrid.style.display = 'none';
++            globalResumeCard.style.display = 'none'; // hide global resume when viewing history
++        });
++    }
++
++    async function fetchBooks() {
++        try {
++            bookGrid.innerHTML = '<div class="file-list-loading">─Éang tß║úi kho truyß╗çn...</div>';
++            historyGrid.innerHTML = '<div class="file-list-loading">─Éang tß║úi lß╗ïch sß╗¡...</div>';
++            
++            const [booksRes, progRes] = await Promise.all([
++                fetch('/api/books'),
++                fetch('/api/progress')
++            ]);
++            const booksData = await booksRes.json();
++            const progList = await progRes.json(); // Now returns array of progress
++            
++            allBooks = booksData.books || [];
++            renderBookGrid(allBooks);
++            renderHistoryGrid(progList || []);
++            
++            const validProg = (progList || []).find(p => p.bookId);
++            if (validProg) {
++                globalResumeCard.style.display = 'flex';
++                const bTitle = validProg.bookId.title;
++                const cTitle = validProg.chapterId ? validProg.chapterId.title : validProg.chapterTitle;
++                globalResumeBook.textContent = bTitle;
++                globalResumeChapter.textContent = cTitle || '';
++                
++                globalResumePlayBtn.onclick = () => {
++                    const bid = validProg.bookId._id;
++                    const cid = validProg.chapterId ? validProg.chapterId._id : validProg.chapterId;
++                    openBook(bid, cid, 0); 
++                };
++            } else {
++                globalResumeCard.style.display = 'none';
++            }
++        } catch (err) {
++            bookGrid.innerHTML = '<div class="file-list-loading" style="color:#ef4444">Lß╗ùi tß║úi dß╗» liß╗çu.</div>';
++        }
++    }
++
++    function renderHistoryGrid(historyList) {
++        historyGrid.innerHTML = '';
++        if (!historyList.length) {
++            historyGrid.innerHTML = '<div class="file-list-loading">Bß║ín ch╞░a ─æß╗ìc truyß╗çn n├áo.</div>';
++            return;
++        }
++        
++        historyList.forEach(prog => {
++            if (!prog.bookId) return; // Skip if book deleted
++            
++            const card = document.createElement('div');
++            card.className = 'book-card';
++            
++            const bid = prog.bookId._id || prog.bookId;
++            const cid = prog.chapterId ? (prog.chapterId._id || prog.chapterId) : null;
++            card.onclick = () => openBook(bid, cid, 0);
++            
++            let coverHtml = `<div class="book-cover-placeholder">Kh├┤ng c├│ ß║únh</div>`;
++            if (prog.bookId.coverImage && prog.bookId.coverType !== 'none') {
++                coverHtml = `<div class="book-cover" style="background-image: url('${prog.bookId.coverImage}')"></div>`;
++            }
++            
++            const cTitle = prog.chapterId ? prog.chapterId.title : (prog.chapterTitle || '─Éang bß║»t ─æß║ºu');
++            
++            card.innerHTML = `
++                ${coverHtml}
++                <div class="book-info">
++                    <div class="book-title" title="${prog.bookId.title}">${prog.bookId.title}</div>
++                    <div class="book-desc" style="color: var(--primary); font-weight: 600;" title="${cTitle}">─Éang ─æß╗ìc: ${cTitle}</div>
++                    <div class="book-chapter-count" style="font-size: 0.75rem; color: var(--text-dim);">Cß║¡p nhß║¡t: ${new Date(prog.updatedAt).toLocaleDateString('vi-VN')}</div>
++                </div>
++            `;
++            historyGrid.appendChild(card);
++        });
++    }
++
++    function renderBookGrid(books) {
++        bookGrid.innerHTML = '';
++        if (!books.length) {
++            bookGrid.innerHTML = '<div class="file-list-loading">Ch╞░a c├│ truyß╗çn n├áo trong kho.</div>';
++            return;
++        }
++        books.forEach(book => {
++            const card = document.createElement('div');
++            card.className = 'book-card';
++            card.onclick = () => openBook(book._id);
++            
++            let coverHtml = `<div class="book-cover-placeholder">Kh├┤ng c├│ ß║únh</div>`;
++            if (book.coverImage && book.coverType !== 'none') {
++                coverHtml = `<div class="book-cover" style="background-image: url('${book.coverImage}')"></div>`;
++            }
++            
++            card.innerHTML = `
++                ${coverHtml}
++                <button class="book-edit-btn" title="Chß╗ënh sß╗¡a truyß╗çn">
++                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
++                </button>
++                <div class="book-info">
++                    <div class="book-title" title="${book.title}">${book.title}</div>
++                    <div class="book-desc" title="${book.description}">${book.description || 'Kh├┤ng c├│ m├┤ tß║ú'}</div>
++                    <div class="book-chapter-count">${book.chapterCount || 0} ch╞░╞íng</div>
++                </div>
++            `;
++            
++            const editBtn = card.querySelector('.book-edit-btn');
++            editBtn.addEventListener('click', (e) => {
++                e.stopPropagation();
++                openEditBookModal(book);
++            });
++            
++            bookGrid.appendChild(card);
++        });
++    }
++
++    async function openBook(bookId, chapterIdToResume = null, paragraphIndex = 0) {
++        currentBookId = bookId;
++        homeView.style.display = 'none';
++        playerView.style.display = 'flex';
++        
++        await fetchChapters(bookId);
++        
++        if (chapterIdToResume) {
++            loadChapter(chapterIdToResume, null, paragraphIndex);
++        } else if (allFiles.length > 0) {
++            loadChapter(allFiles[0].id);
++        }
++    }
++
+     async function fetchChapters(bookId) {
+         try {
+             fileListEl.innerHTML = '<li class="file-list-loading">─Éang tß║úi ch╞░╞íng...</li>';
+@@ -606,6 +927,7 @@ document.addEventListener('DOMContentLoaded', () => {
+             li.className = 'file-item';
+             if (file.id === currentStoryId) li.classList.add('active');
+             li.innerHTML = `
++                <input type="checkbox" class="chapter-checkbox" value="${file.id}" style="display: ${window.isSelectMode ? 'block' : 'none'}; margin-right: 8px;">
+                 <div style="display:flex; align-items:center; flex:1; gap:10px; overflow:hidden;" class="item-click-area">
+                     <div class="file-item-icon">
+                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+@@ -615,13 +937,31 @@ document.addEventListener('DOMContentLoaded', () => {
+                     </div>
+                     <span class="file-item-name" title="${file.title}">${file.title}</span>
+                 </div>
+-                <button class="delete-btn" title="X├│a" style="background:transparent; border:none; color:#ef4444; cursor:pointer; padding:6px; opacity:0.6;">
++                <button class="delete-btn" title="X├│a" style="display: ${window.isSelectMode ? 'none' : 'block'}; background:transparent; border:none; color:#ef4444; cursor:pointer; padding:6px; opacity:0.6;">
+                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                         <polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                     </svg>
+                 </button>
+             `;
+-            li.querySelector('.item-click-area').addEventListener('click', () => loadChapter(file.id, li));
++            
++            const checkbox = li.querySelector('.chapter-checkbox');
++            if (checkbox) {
++                checkbox.checked = window.selectedChapters.has(file.id);
++                checkbox.addEventListener('change', (e) => {
++                    if (e.target.checked) window.selectedChapters.add(file.id);
++                    else window.selectedChapters.delete(file.id);
++                    document.getElementById('selected-count').textContent = window.selectedChapters.size;
++                });
++            }
++            li.querySelector('.item-click-area').addEventListener('click', () => {
++                if (window.isSelectMode) {
++                    checkbox.checked = !checkbox.checked;
++                    checkbox.dispatchEvent(new Event('change'));
++                } else {
++                    loadChapter(file.id, li);
++                }
++            });
++
+             li.querySelector('.delete-btn').addEventListener('click', (e) => {
+                 e.stopPropagation();
+                 const modal = document.getElementById('delete-modal');
+@@ -659,24 +999,20 @@ document.addEventListener('DOMContentLoaded', () => {
+     async function loadChapter(chapterId, li = null, startIndex = 0) {
+         currentStoryId = chapterId;
+         renderChapterList(allFiles);
+-        
+         if (sidebarEl && sidebarEl.classList.contains('open')) {
+             sidebarEl.classList.remove('open');
+             sidebarOverlay.style.display = 'none';
+         }
+-
+         const editBtn = document.getElementById('edit-story-btn');
+         if (editBtn) editBtn.style.display = 'none';
+ 
+         stopPlayback();
+-        storyContainerEl.innerHTML = `<div class="empty-state"><div class="empty-icon">
+-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+-                <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+-            </svg></div><p>─Éang tß║úi nß╗Öi dung ch╞░╞íng...</p></div>`;
++        storyContainerEl.innerHTML = '<div class="empty-state"><p>─Éang tß║úi nß╗Öi dung ch╞░╞íng...</p></div>';
++        
+         try {
+             const data = await (await fetch(`/api/chapters/${chapterId}`)).json();
+             if (data.error) throw new Error(data.error);
+-            story        = data.content;
++            story = data.content;
+             currentIndex = startIndex;
+             headerLabelEl.textContent = '─Éang xem';
+             storyTitleEl.textContent  = data.title;
+@@ -684,12 +1020,38 @@ document.addEventListener('DOMContentLoaded', () => {
+             renderStoryContents();
+             playerBar.style.display = 'flex';
+             updateProgress();
+-            
+-            startPrefetchLoop();
+-            
+-            // Try auto-resume if start index > 0
+-            if (startIndex > 0) {
+-                setTimeout(() => stopAndPlay(startIndex), 300);
++
++            mainAudio.ontimeupdate = null;
++            mainAudio.onended = null;
++
++            if (data.audioStatus === 'ready' && data.audioUrl) {
++                mainAudio.src = data.audioUrl;
++                mainAudio.playbackRate = speedRate;
++                window.currentTimestamps = data.audioTimestamps || [];
++
++                mainAudio.ontimeupdate = () => {
++                    const ct = mainAudio.currentTime;
++                    const ts = window.currentTimestamps.find(t => ct >= t.start && ct < t.end);
++                    if (ts && currentIndex !== ts.index) {
++                        currentIndex = ts.index;
++                        highlightParagraph(ts.index);
++                        updateProgress();
++                        saveProgress(ts.index);
++                    }
++                };
++
++                mainAudio.onended = () => {
++                    isPlaying = false;
++                    updatePlayButton();
++                    playNextChapter();
++                };
++
++                if (startIndex > 0) {
++                    const startTs = window.currentTimestamps.find(t => t.index === startIndex);
++                    if (startTs) mainAudio.currentTime = startTs.start;
++                }
++            } else if (data.audioStatus === 'processing' || data.audioStatus === 'pending') {
++                showToast('Audio ─æang ─æ╞░ß╗úc tß║ío, vui l├▓ng chß╗¥ ├¡t ph├║t...');
+             }
+         } catch (err) {
+             storyTitleEl.textContent = 'Lß╗ùi tß║úi ch╞░╞íng';
+@@ -1062,7 +1424,7 @@ document.addEventListener('DOMContentLoaded', () => {
+             }
+         } else {
+             if (currentVoice === 'normal' && window.speechSynthesis) window.speechSynthesis.pause();
+-            else activeAudios.forEach(a => a.pause());
++            else mainAudio.pause();
+             isPlaying = false; isPaused = true; updatePlayButton();
+         }
+     }

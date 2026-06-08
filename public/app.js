@@ -1,5 +1,67 @@
 document.addEventListener('DOMContentLoaded', () => {
 
+    // List Controls Logic
+    const toggleSelectModeBtn = document.getElementById('toggle-select-mode-btn');
+    const bulkActions = document.getElementById('bulk-actions');
+    const selectAllBtn = document.getElementById('select-all-btn');
+    const bulkDeleteBtn = document.getElementById('bulk-delete-btn');
+
+    if (toggleSelectModeBtn) {
+        toggleSelectModeBtn.addEventListener('click', () => {
+            window.isSelectMode = !window.isSelectMode;
+            if (!window.isSelectMode) window.selectedChapters.clear();
+            
+            toggleSelectModeBtn.textContent = window.isSelectMode ? 'Hủy' : 'Chọn nhiều';
+            bulkActions.style.display = window.isSelectMode ? 'flex' : 'none';
+            document.getElementById('selected-count').textContent = window.selectedChapters.size;
+            renderChapterList(allFiles);
+        });
+
+        selectAllBtn.addEventListener('click', () => {
+            const visibleFiles = allFiles; // or whatever is filtered
+            const allSelected = visibleFiles.every(f => window.selectedChapters.has(f.id));
+            if (allSelected) {
+                visibleFiles.forEach(f => window.selectedChapters.delete(f.id));
+            } else {
+                visibleFiles.forEach(f => window.selectedChapters.add(f.id));
+            }
+            document.getElementById('selected-count').textContent = window.selectedChapters.size;
+            renderChapterList(allFiles); // re-render to update checkboxes
+        });
+
+        bulkDeleteBtn.addEventListener('click', async () => {
+            if (window.selectedChapters.size === 0) return showToast('Chưa chọn chương nào!');
+            if (!confirm(`Bạn có chắc chắn muốn xóa ${window.selectedChapters.size} chương đã chọn? Hành động này không thể hoàn tác.`)) return;
+
+            bulkDeleteBtn.disabled = true;
+            bulkDeleteBtn.textContent = 'Đang xóa...';
+            
+            try {
+                const res = await fetch('/api/chapters/bulk-delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: Array.from(window.selectedChapters) })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast(`Đã xóa ${data.deletedCount} chương thành công!`);
+                    window.selectedChapters.clear();
+                    window.isSelectMode = false;
+                    toggleSelectModeBtn.textContent = 'Chọn nhiều';
+                    bulkActions.style.display = 'none';
+                    fetchChapters(currentBookId);
+                } else {
+                    showToast('Lỗi khi xóa nhiều: ' + data.error);
+                }
+            } catch (err) {
+                showToast('Lỗi hệ thống khi xóa!');
+            }
+            bulkDeleteBtn.disabled = false;
+            bulkDeleteBtn.innerHTML = 'Xóa (<span id="selected-count">0</span>)';
+        });
+    }
+
+
     const fileListEl       = document.getElementById('file-list');
     const refreshBtn       = document.getElementById('refresh-btn');
     const storyTitleEl     = document.getElementById('story-title');
@@ -64,55 +126,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     let currentBookId = null;
 
-    const modeAutoBtn = document.getElementById('mode-auto-btn');
-    const modeVipBtn = document.getElementById('mode-vip-btn');
-    const modeNormalBtn = document.getElementById('mode-normal-btn');
-    const modeSleepBtn = document.getElementById('mode-sleep-btn');
     
-    let voiceMode = localStorage.getItem('preferredVoiceMode') || 'auto';
-    let currentVoice = voiceMode === 'normal' ? 'normal' : 'vip';
-    let browserSpeech = null;
-    let browserVoice = null;
-    
-    function initBrowserVoice() {
-        const setVoice = () => {
-            const voices = window.speechSynthesis.getVoices();
-            browserVoice = voices.find(v => v.lang.includes('vi')) || voices.find(v => v.lang.includes('VI')) || voices[0];
-        };
-        if (window.speechSynthesis.getVoices().length > 0) setVoice();
-        else window.speechSynthesis.onvoiceschanged = setVoice;
-    }
-    initBrowserVoice();
-    
-    function updateModeButtons() {
-        if (!modeAutoBtn) return;
-        const activeStyle = 'background: var(--primary); color: white; border: none; padding: 6px 12px; font-size: 0.85rem; border-radius: 6px; cursor: pointer; font-weight: 500;';
-        const inactiveStyle = 'background: var(--surface-2); color: var(--text); border: 1px solid var(--border); padding: 6px 12px; font-size: 0.85rem; border-radius: 6px; cursor: pointer; font-weight: 500;';
-        modeAutoBtn.style.cssText = voiceMode === 'auto' ? activeStyle : inactiveStyle;
-        modeVipBtn.style.cssText = voiceMode === 'vip' ? activeStyle : inactiveStyle;
-        modeNormalBtn.style.cssText = voiceMode === 'normal' ? activeStyle : inactiveStyle;
-        if (modeSleepBtn) modeSleepBtn.style.cssText = voiceMode === 'sleep' ? activeStyle : inactiveStyle;
-    }
-
-    if (modeAutoBtn) {
-        const handleModeChange = (newMode, defaultVoice) => {
-            voiceMode = newMode;
-            currentVoice = defaultVoice;
-            localStorage.setItem('preferredVoiceMode', newMode);
-            updateModeButtons();
-            const wasPlaying = isPlaying && !isPaused;
-            if (wasPlaying) {
-                stopPlayback(false);
-                setTimeout(() => beginPlay(currentIndex), 50);
-            }
-        };
-
-        modeAutoBtn.addEventListener('click', () => handleModeChange('auto', 'vip'));
-        modeVipBtn.addEventListener('click', () => handleModeChange('vip', 'vip'));
-        modeNormalBtn.addEventListener('click', () => handleModeChange('normal', 'normal'));
-        if (modeSleepBtn) modeSleepBtn.addEventListener('click', () => handleModeChange('sleep', 'vip'));
-        updateModeButtons();
-    }
 
     if (mobileMenuBtn && sidebarEl && sidebarOverlay) {
         mobileMenuBtn.addEventListener('click', () => {
@@ -139,42 +153,14 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentStoryId  = null;
     let allFiles        = [];
     let allBooks        = [];
+    window.isSelectMode = false;
+    window.selectedChapters = new Set();
 
-    // Pool of 2 audio elements to avoid iOS memory limits and NotAllowed errors from creating too many
-    const audioPool = [new Audio(), new Audio()];
-    let poolIndex = 0;
-    let activeAudios = new Set();
-    
-    // iOS Web Audio Unlock & KeepAlive
-    const SILENT_WAV = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
-    let isAudioUnlocked = false;
-    let keepAliveAudio = new Audio();
-    keepAliveAudio.loop = true;
-    keepAliveAudio.src = SILENT_WAV;
+    const mainAudio = document.getElementById('main-audio-player');
+    window.currentTimestamps = [];
 
     function unlockAudio() {
-        if (isAudioUnlocked) return;
-        audioPool.forEach(a => {
-            a.src = SILENT_WAV;
-            a.play().then(() => {
-                a.pause();
-            }).catch(() => {});
-        });
-        keepAliveAudio.play().then(() => {
-            keepAliveAudio.pause();
-        }).catch(() => {});
-        isAudioUnlocked = true;
-    }
-
-    document.body.addEventListener('click', unlockAudio, { once: true });
-    document.body.addEventListener('touchstart', unlockAudio, { once: true });
-
-    function startKeepAlive() {
-        keepAliveAudio.play().catch(() => {});
-    }
-    
-    function stopKeepAlive() {
-        keepAliveAudio.pause();
+        mainAudio.play().then(() => mainAudio.pause()).catch(() => {});
     }
     let fetchController = null;
 
@@ -307,7 +293,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const now = Date.now();
         if (now - playSessionStart >= IDLE_TIMEOUT_MS) {
             isWaitingForIdleCheck = true;
-            activeAudios.forEach(a => a.pause());
+            mainAudio.pause();
             isPlaying = false; isPaused = true; updatePlayButton(); // Manually pause
             idleCheckModal.style.display = 'flex';
         }
@@ -338,12 +324,7 @@ document.addEventListener('DOMContentLoaded', () => {
         speedRate = parseFloat(rateRange.value);
         rateDisplay.textContent = speedRate.toFixed(1) + 'x';
         localStorage.setItem('preferredSpeed', speedRate); // Save preference
-        prefetchedBlobs.clear();
-        activeAudios.forEach(a => { a.playbackRate = speedRate; });
-        if (currentVoice === 'normal' && isPlaying) {
-            stopPlayback(false);
-            beginPlay(currentIndex);
-        }
+        mainAudio.playbackRate = speedRate;
     });
 
     // ─── Add Book Logic ────────────────────────────────────────────────────────
@@ -484,7 +465,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 globalResumePlayBtn.onclick = () => {
                     const bid = validProg.bookId._id;
-                    const cid = validProg.chapterId ? validProg.chapterId._id : validProg.chapterId;
+                    const cid = validProg.chapterId ? (validProg.chapterId._id || validProg.chapterId) : null;
                     openBook(bid, cid, 0); 
                 };
             } else {
@@ -606,6 +587,7 @@ document.addEventListener('DOMContentLoaded', () => {
             li.className = 'file-item';
             if (file.id === currentStoryId) li.classList.add('active');
             li.innerHTML = `
+                <input type="checkbox" class="chapter-checkbox" value="${file.id}" style="display: ${window.isSelectMode ? 'block' : 'none'}; margin-right: 8px;">
                 <div style="display:flex; align-items:center; flex:1; gap:10px; overflow:hidden;" class="item-click-area">
                     <div class="file-item-icon">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -615,13 +597,31 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                     <span class="file-item-name" title="${file.title}">${file.title}</span>
                 </div>
-                <button class="delete-btn" title="Xóa" style="background:transparent; border:none; color:#ef4444; cursor:pointer; padding:6px; opacity:0.6;">
+                <button class="delete-btn" title="Xóa" style="display: ${window.isSelectMode ? 'none' : 'block'}; background:transparent; border:none; color:#ef4444; cursor:pointer; padding:6px; opacity:0.6;">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                     </svg>
                 </button>
             `;
-            li.querySelector('.item-click-area').addEventListener('click', () => loadChapter(file.id, li));
+            
+            const checkbox = li.querySelector('.chapter-checkbox');
+            if (checkbox) {
+                checkbox.checked = window.selectedChapters.has(file.id);
+                checkbox.addEventListener('change', (e) => {
+                    if (e.target.checked) window.selectedChapters.add(file.id);
+                    else window.selectedChapters.delete(file.id);
+                    document.getElementById('selected-count').textContent = window.selectedChapters.size;
+                });
+            }
+            li.querySelector('.item-click-area').addEventListener('click', () => {
+                if (window.isSelectMode) {
+                    checkbox.checked = !checkbox.checked;
+                    checkbox.dispatchEvent(new Event('change'));
+                } else {
+                    loadChapter(file.id, li);
+                }
+            });
+
             li.querySelector('.delete-btn').addEventListener('click', (e) => {
                 e.stopPropagation();
                 const modal = document.getElementById('delete-modal');
@@ -656,40 +656,81 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentBookId) fetchChapters(currentBookId);
     });
 
+    
+    async function saveProgress(chapterId, chapterTitle) {
+        if (!currentBookId) return;
+        try {
+            const b = allBooks.find(b => b._id === currentBookId);
+            await fetch('/api/progress', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    bookId: currentBookId,
+                    chapterId: chapterId,
+                    bookTitle: b ? b.title : '',
+                    chapterTitle: chapterTitle
+                })
+            });
+        } catch (e) { console.error('Lỗi lưu tiến độ', e); }
+    }
+
     async function loadChapter(chapterId, li = null, startIndex = 0) {
         currentStoryId = chapterId;
         renderChapterList(allFiles);
-        
         if (sidebarEl && sidebarEl.classList.contains('open')) {
             sidebarEl.classList.remove('open');
             sidebarOverlay.style.display = 'none';
         }
-
         const editBtn = document.getElementById('edit-story-btn');
         if (editBtn) editBtn.style.display = 'none';
 
         stopPlayback();
-        storyContainerEl.innerHTML = `<div class="empty-state"><div class="empty-icon">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
-            </svg></div><p>Đang tải nội dung chương...</p></div>`;
+        storyContainerEl.innerHTML = '<div class="empty-state"><p>Äang táº£i ná»™i dung chÆ°Æ¡ng...</p></div>';
+        
         try {
             const data = await (await fetch(`/api/chapters/${chapterId}`)).json();
             if (data.error) throw new Error(data.error);
-            story        = data.content;
+            story = data.content;
             currentIndex = startIndex;
-            headerLabelEl.textContent = 'Đang xem';
+            headerLabelEl.textContent = 'Äang xem';
             storyTitleEl.textContent  = data.title;
+            saveProgress(chapterId, data.title);
             if (editBtn) editBtn.style.display = 'block';
             renderStoryContents();
             playerBar.style.display = 'flex';
             updateProgress();
-            
-            startPrefetchLoop();
-            
-            // Try auto-resume if start index > 0
-            if (startIndex > 0) {
-                setTimeout(() => stopAndPlay(startIndex), 300);
+
+            mainAudio.ontimeupdate = null;
+            mainAudio.onended = null;
+
+            if (data.audioStatus === 'ready' && data.audioUrl) {
+                mainAudio.src = data.audioUrl;
+                mainAudio.playbackRate = speedRate;
+                window.currentTimestamps = data.audioTimestamps || [];
+
+                mainAudio.ontimeupdate = () => {
+                    const ct = mainAudio.currentTime;
+                    const ts = window.currentTimestamps.find(t => ct >= t.start && ct < t.end);
+                    if (ts && currentIndex !== ts.index) {
+                        currentIndex = ts.index;
+                        highlightParagraph(ts.index);
+                        updateProgress();
+                        saveProgress(ts.index);
+                    }
+                };
+
+                mainAudio.onended = () => {
+                    isPlaying = false;
+                    updatePlayButton();
+                    playNextChapter();
+                };
+
+                if (startIndex > 0) {
+                    const startTs = window.currentTimestamps.find(t => t.index === startIndex);
+                    if (startTs) mainAudio.currentTime = startTs.start;
+                }
+            } else if (data.audioStatus === 'processing' || data.audioStatus === 'pending') {
+                showToast('Audio Ä‘ang Ä‘Æ°á»£c táº¡o, vui lÃ²ng chá» Ã­t phÃºt...');
             }
         } catch (err) {
             storyTitleEl.textContent = 'Lỗi tải chương';
@@ -710,369 +751,52 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    let prefetchedBlobs = new Map();
-    let prefetchController = null;
-    let isPrefetching = false;
-
-    // Returns true if text has NO letters and NO digits — pure punctuation like '......' or '---'.
-    // Mixed content like 'hắc....' still returns false so it gets read normally.
-    function isPunctuationOnly(text) {
-        return !(/\p{L}/u.test(text)) && !(/\d/.test(text));
-    }
-
+    
     function stopAndPlay(index) {
-        resetIdleTimer();
-        stopPlayback(false); // Don't clear the buffer, just stop current audio
-        setTimeout(() => beginPlay(index), 50);
-    }
-
-    async function startPrefetchLoop() {
-        if (isPrefetching) return;
-        isPrefetching = true;
-
-        try {
-            if (prefetchController) prefetchController.abort();
-            prefetchController = new AbortController();
-
-            let nextToFetch = currentIndex;
-
-            while (nextToFetch < story.length) {
-                if (prefetchController.signal.aborted) break;
-
-                // Skip if already prefetched or in the past
-                if (nextToFetch < currentIndex || prefetchedBlobs.has(nextToFetch)) {
-                    nextToFetch++;
-                    continue;
-                }
-
-                const text = story[nextToFetch];
-                
-                // If the paragraph is pure punctuation (e.g. '......'), skip without calling TTS
-                if (isPunctuationOnly(text)) {
-                    prefetchedBlobs.set(nextToFetch, 'SKIP');
-                    updateProgress();
-                    nextToFetch++;
-                    continue;
-                }
-                
-                const url = `/api/tts?text=${encodeURIComponent(text)}`;
-                
-                try {
-                    const res = await fetch(url, { signal: prefetchController.signal });
-                    
-                    if (res.ok) {
-                        const blob = await res.blob();
-                        if (blob.size > 0) {
-                            prefetchedBlobs.set(nextToFetch, blob);
-                        } else {
-                            // TTS returned empty audio (e.g. garbled text) - mark as skip
-                            prefetchedBlobs.set(nextToFetch, 'SKIP');
-                        }
-                        updateProgress();
-                        nextToFetch++;
-                        // No delay - load at maximum speed
-                    } else {
-                        // Rate limit or server error: wait then retry
-                        await new Promise(r => setTimeout(r, 2000));
-                    }
-                } catch (e) {
-                    if (e.name === 'AbortError') break;
-                    // Network error: wait and retry
-                    await new Promise(r => setTimeout(r, 3000));
-                }
-            }
-        } finally {
-            isPrefetching = false;
-        }
-    }
-
-    let progressTimeout = null;
-    function saveProgress(index) {
-        if (!currentBookId || !currentStoryId || !story || story.length === 0) return;
-        const currentTitle = allFiles.find(f => f.id === currentStoryId)?.title || 'Chương không tên';
-        const currentBookTitle = allBooks.find(b => b._id === currentBookId)?.title || 'Chương không tên';
-        
-        clearTimeout(progressTimeout);
-        progressTimeout = setTimeout(() => {
-            fetch('/api/progress', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    bookId: currentBookId, 
-                    chapterId: currentStoryId, 
-                    bookTitle: currentBookTitle,
-                    chapterTitle: currentTitle 
-                })
+        if (!window.currentTimestamps || window.currentTimestamps.length === 0) return;
+        const ts = window.currentTimestamps.find(t => t.index === index);
+        if (ts) {
+            mainAudio.currentTime = ts.start;
+            mainAudio.play().then(() => {
+                isPlaying = true;
+                isPaused = false;
+                updatePlayButton();
             }).catch(() => {});
-        }, 1500);
-        
-        // Removed resumeCard display code since we have globalResumeCard now on the home screen
-    }
-
-    async function beginPlay(index, isAutoAdvance = false) {
-        if (!story || story.length === 0) return;
-        
-        if (index >= story.length) {
-            isPlaying = false;
-            updatePlayButton();
-            playNextChapter();
-            return;
         }
-
-        currentIndex = index;
-        isPlaying    = true;
-        isPaused     = false;
-        updatePlayButton();
-        updateProgress();
-        highlightParagraph(index);
-        
-        saveProgress(index);
-
-        if (voiceMode === 'auto') {
-            if (currentVoice === 'normal') {
-                let bufferedCount = 0;
-                for (let i = index; i < story.length; i++) {
-                    if (prefetchedBlobs.has(i) || isPunctuationOnly(story[i])) bufferedCount++;
-                    else break;
-                }
-                if (bufferedCount >= 5 || (index + bufferedCount) >= story.length) {
-                    currentVoice = 'vip';
-                    showToast('Đã tải trước 5 đoạn, quay lại Giọng VIP.');
-                }
-            } else {
-                currentVoice = 'vip';
-            }
-        } else if (voiceMode === 'sleep') {
-            currentVoice = 'vip';
-        } else {
-            currentVoice = voiceMode;
-        }
-        
-        startPrefetchLoop();
-
-        if (currentVoice === 'normal') {
-            playWithBrowserVoice(index);
-            return;
-        }
-
-        try {
-            let blob = prefetchedBlobs.get(index);
-
-            if (!blob) {
-                if (voiceMode === 'auto') {
-                    let waitTime = 0;
-                    while (!prefetchedBlobs.has(index) && waitTime < 1000) {
-                        if (!isPlaying || currentIndex !== index) return;
-                        await new Promise(r => setTimeout(r, 200));
-                        waitTime += 200;
-                    }
-                    if (!prefetchedBlobs.has(index)) {
-                        currentVoice = 'normal';
-                        showToast('Giọng VIP đang tải chậm, tạm chuyển sang giọng thường.');
-                        playWithBrowserVoice(index);
-                        return;
-                    }
-                } else if (voiceMode === 'sleep') {
-                    showToast('Đang tải đệm 5 đoạn (Chế độ Đi Ngủ)...');
-                    document.getElementById(`para-${index}`)?.classList.add('para-loading');
-                    
-                    startKeepAlive(); // Keep audio session alive on iOS while waiting
-                    
-                    let waitTime = 0;
-                    while (waitTime < 60000) {
-                        if (!isPlaying || currentIndex !== index) {
-                            stopKeepAlive();
-                            return;
-                        }
-                        
-                        let bufferedCount = 0;
-                        for (let i = index; i < story.length; i++) {
-                            if (prefetchedBlobs.has(i) || isPunctuationOnly(story[i])) bufferedCount++;
-                            else break;
-                        }
-                        
-                        if (bufferedCount >= 5 || (index + bufferedCount) >= story.length) {
-                            break;
-                        }
-                        
-                        await new Promise(r => setTimeout(r, 500));
-                        waitTime += 500;
-                    }
-                    
-                    stopKeepAlive();
-                    document.getElementById(`para-${index}`)?.classList.remove('para-loading');
-                } else {
-                    showToast('Đang tải đệm âm thanh (Buffering)...');
-                    document.getElementById(`para-${index}`)?.classList.add('para-loading');
-                    
-                    let waitTime = 0;
-                    while (!prefetchedBlobs.has(index) && waitTime < 15000) {
-                        if (!isPlaying || currentIndex !== index) return;
-                        await new Promise(r => setTimeout(r, 500));
-                        waitTime += 500;
-                    }
-                    
-                    document.getElementById(`para-${index}`)?.classList.remove('para-loading');
-                }
-                
-                blob = prefetchedBlobs.get(index);
-                
-                if (!blob) {
-                    console.warn(`Paragraph ${index} timed out after 15s, skipping.`);
-                    if (isPlaying) beginPlay(index + 1, true);
-                    return;
-                }
-            }
-            
-            // Remove from buffer once we are about to play it
-            // prefetchedBlobs.delete(index);
-            
-            // SKIP marker: paragraph was flagged as punctuation-only, advance silently
-            if (blob === 'SKIP') {
-                if (isPlaying) beginPlay(index + 1, true);
-                return;
-            }
-
-            const blobUrl = URL.createObjectURL(blob);
-
-            if (!isPlaying || currentIndex !== index) {
-                URL.revokeObjectURL(blobUrl);
-                return;
-            }
-
-            if (!isAutoAdvance) {
-                activeAudios.forEach(a => { 
-                    a.pause(); 
-                    a.ontimeupdate = null; 
-                    if (a.blobUrl) {
-                        URL.revokeObjectURL(a.blobUrl);
-                        a.blobUrl = null;
-                    }
-                });
-                activeAudios.clear();
-            }
-
-            const audio = audioPool[poolIndex];
-            poolIndex = (poolIndex + 1) % 2;
-            
-            // Cleanup previous blob on this audio element if any
-            if (audio.blobUrl && audio.blobUrl !== blobUrl) {
-                URL.revokeObjectURL(audio.blobUrl);
-            }
-
-            audio.src = blobUrl;
-            audio.playbackRate = speedRate;
-            audio.blobUrl = blobUrl;
-            activeAudios.add(audio);
-            
-            let hasStartedNext = false;
-
-            audio.ontimeupdate = () => {
-                if (audio.duration && (audio.duration - audio.currentTime) <= 0.4 && !hasStartedNext) {
-                    hasStartedNext = true;
-                    if (isPlaying) beginPlay(currentIndex + 1, true);
-                }
-            };
-            
-            audio.onended = () => {
-                activeAudios.delete(audio);
-                if (audio.blobUrl === blobUrl) {
-                    URL.revokeObjectURL(blobUrl);
-                    audio.blobUrl = null;
-                }
-            };
-
-            audio.onerror = () => {
-                console.error('Audio object error', audio.error);
-                showToast('Lỗi phát âm thanh. Đang thử đoạn tiếp...');
-                if (isPlaying && !hasStartedNext) {
-                    hasStartedNext = true;
-                    setTimeout(() => beginPlay(currentIndex + 1, true), 1000);
-                }
-            };
-
-            try {
-                await audio.play();
-            } catch (playErr) {
-                activeAudios.delete(audio);
-                URL.revokeObjectURL(blobUrl);
-                if (playErr.name === 'NotAllowedError') {
-                    isPlaying = false; isPaused = true; updatePlayButton();
-                    showToast('Trình duyệt chặn tự động phát. Vui lòng bấm Phát thủ công.');
-                    return; 
-                }
-                throw playErr;
-            }
-            
-            updatePlayButton();
-
-            startPrefetchLoop();
-
-        } catch (err) {
-            if (err.name === 'AbortError' || err.message.includes('interrupted')) return;
-            console.error('Fetch/Play error:', err.message);
-            showToast('Lỗi tải đoạn âm thanh này. Bỏ qua...');
-            if (isPlaying) setTimeout(() => beginPlay(currentIndex + 1, true), 1000);
-        }
-    }
-
-    function playWithBrowserVoice(index) {
-        if (!isPlaying || currentIndex !== index) return;
-        const text = story[index];
-        if (isPunctuationOnly(text)) {
-            if (isPlaying) setTimeout(() => beginPlay(index + 1, true), 100);
-            return;
-        }
-        
-        if (window.speechSynthesis) window.speechSynthesis.cancel();
-        browserSpeech = new SpeechSynthesisUtterance(text);
-        if (browserVoice) browserSpeech.voice = browserVoice;
-        browserSpeech.rate = speedRate;
-        
-        let hasStartedNext = false;
-        
-        browserSpeech.onend = () => {
-            if (isPlaying && !hasStartedNext) {
-                hasStartedNext = true;
-                beginPlay(currentIndex + 1, true);
-            }
-        };
-        browserSpeech.onerror = (e) => {
-            console.error('SpeechSynthesis Error', e);
-            if (isPlaying && !hasStartedNext) {
-                hasStartedNext = true;
-                setTimeout(() => beginPlay(currentIndex + 1, true), 1000);
-            }
-        };
-        window.speechSynthesis.speak(browserSpeech);
-        
-        updatePlayButton();
-        startPrefetchLoop();
     }
 
     function togglePlay() {
-        if (!isPlaying) {
-            resetIdleTimer();
-            if (isPaused && (activeAudios.size > 0 || currentVoice === 'normal')) {
-                if (currentVoice === 'normal' && window.speechSynthesis) window.speechSynthesis.resume();
-                else activeAudios.forEach(a => a.play().catch(()=>{}));
-                isPlaying = true; isPaused = false; updatePlayButton();
-            } else {
-                beginPlay(currentIndex);
-            }
+        if (!mainAudio.src) return showToast('Chưa có audio để phát!');
+        if (isPlaying && !isPaused) {
+            mainAudio.pause();
+            isPlaying = false;
+            isPaused = true;
         } else {
-            if (currentVoice === 'normal' && window.speechSynthesis) window.speechSynthesis.pause();
-            else activeAudios.forEach(a => a.pause());
-            isPlaying = false; isPaused = true; updatePlayButton();
+            mainAudio.play().then(() => {
+                isPlaying = true;
+                isPaused = false;
+            }).catch(e => showToast('Không thể phát: ' + e.message));
         }
+        updatePlayButton();
     }
+
+    function stopPlayback(resetToZero = true) {
+        mainAudio.pause();
+        if (resetToZero) mainAudio.currentTime = 0;
+        isPlaying = false;
+        isPaused = false;
+        updatePlayButton();
+    }
+
+
+
     
     function playNextChapter() {
         if (!currentStoryId) return;
         const idx = allFiles.findIndex(f => f.id === currentStoryId);
         if (idx !== -1 && idx < allFiles.length - 1) {
             loadChapter(allFiles[idx + 1].id).then(() => {
-                setTimeout(() => beginPlay(0), 500);
+                setTimeout(() => stopAndPlay(0), 500);
             });
         } else {
             showToast('Đã đến chương cuối cùng.');
@@ -1084,7 +808,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const idx = allFiles.findIndex(f => f.id === currentStoryId);
         if (idx > 0) {
             loadChapter(allFiles[idx - 1].id).then(() => {
-                setTimeout(() => beginPlay(0), 500);
+                setTimeout(() => stopAndPlay(0), 500);
             });
         } else {
             showToast('Đây là chương đầu tiên.');
@@ -1111,39 +835,7 @@ document.addEventListener('DOMContentLoaded', () => {
         updateProgress();
     });
 
-    function stopPlayback(clearBuffer = true) {
-        if (clearBuffer) {
-            prefetchedBlobs.clear();
-        }
-        isPrefetching = false;
-        if (prefetchController) {
-            prefetchController.abort();
-            prefetchController = null;
-        }
 
-        if (window.speechSynthesis) {
-            if (browserSpeech) {
-                browserSpeech.onend = null;
-                browserSpeech.onerror = null;
-            }
-            window.speechSynthesis.cancel();
-        }
-        
-        activeAudios.forEach(a => { 
-            a.pause(); 
-            a.ontimeupdate = null; 
-            if (a.blobUrl) {
-                URL.revokeObjectURL(a.blobUrl);
-                a.blobUrl = null;
-            }
-        });
-        activeAudios.clear();
-        
-        isPlaying = false; isPaused = false;
-        document.querySelectorAll('.story-container p').forEach(p => p.classList.remove('reading-active'));
-        updatePlayButton();
-        updateProgress();
-    }
 
     function updatePlayButton() {
         const isActuallyPlaying = isPlaying && !isPaused;
@@ -1169,16 +861,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (total === 0) {
             progressBuffer.style.width = '0%';
         } else {
-            // Find consecutive buffered paragraphs
-            let bufferedCount = 0;
-            for (let i = 0; i < total; i++) {
-                if (i <= currentIndex || prefetchedBlobs.has(i)) {
-                    bufferedCount++;
-                } else {
-                    break;
-                }
-            }
-            progressBuffer.style.width = `${(bufferedCount / total) * 100}%`;
+            progressBuffer.style.width = '100%';
         }
     }
 
@@ -1551,4 +1234,58 @@ document.addEventListener('DOMContentLoaded', () => {
     playerView.style.display = 'none';
     fetchBooks();
     updatePlayButton();
+
+    // ─── Upload Progress Polling ──────────────────────────────────────────
+    const uploadWidget = document.getElementById('upload-progress-widget');
+    const uploadWidgetBody = document.getElementById('upload-widget-body');
+    const uploadTaskList = document.getElementById('upload-task-list');
+    const uploadWidgetToggle = document.getElementById('upload-widget-toggle');
+
+    uploadWidgetToggle.addEventListener('click', () => {
+        uploadWidget.classList.toggle('minimized');
+        const icon = uploadWidget.classList.contains('minimized') 
+            ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>'
+            : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>';
+        uploadWidgetToggle.innerHTML = icon;
+    });
+
+    async function fetchUploadProgress() {
+        try {
+            const res = await fetch('/api/tasks/progress');
+            if (!res.ok) return;
+            const data = await res.json();
+            
+            if (data.tasks && data.tasks.length > 0) {
+                uploadWidget.style.display = 'flex';
+                uploadTaskList.innerHTML = '';
+                
+                data.tasks.forEach(task => {
+                    const li = document.createElement('li');
+                    li.className = 'upload-task-item';
+                    
+                    const progress = task.audioProgress || 0;
+                    const statusText = task.audioStatus === 'pending' ? 'Đang chờ...' : 'Đang xử lý';
+                    
+                    li.innerHTML = `
+                        <div class="upload-task-title">${task.title}</div>
+                        <div class="upload-task-progress">
+                            <div class="upload-task-bar-bg">
+                                <div class="upload-task-bar-fill" style="width: ${progress}%"></div>
+                            </div>
+                            <div class="upload-task-percent">${progress}%</div>
+                        </div>
+                    `;
+                    uploadTaskList.appendChild(li);
+                });
+            } else {
+                uploadWidget.style.display = 'none';
+            }
+        } catch (error) {
+            console.error('Failed to fetch upload progress', error);
+        }
+    }
+
+    // Poll every 3 seconds
+    setInterval(fetchUploadProgress, 3000);
+    fetchUploadProgress(); // Initial fetch
 });
